@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { JsonValue, LogEntry, SessionIndexRecord, ThreadRecord } from "./types.js";
 
@@ -107,31 +107,17 @@ export class SessionLogStore {
     await this.saveIndexQueued();
   }
 
-  async listSessions(): Promise<SessionIndexRecord[]> {
-    const index = await this.loadIndex();
-    return [...index.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-  }
-
-  async readThreadLog(threadId: string): Promise<LogEntry[]> {
+  async deleteThreadLog(threadId: string): Promise<boolean> {
     await this.ensure();
+    const index = await this.loadIndex();
+    index.delete(threadId);
+    await this.saveIndexQueued();
     const filePath = this.threadLogPath(threadId);
     if (!existsSync(filePath)) {
-      return [];
+      return false;
     }
-    const text = await readFile(filePath, "utf8");
-    const entries: LogEntry[] = [];
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-      try {
-        entries.push(JSON.parse(trimmed) as LogEntry);
-      } catch {
-        entries.push({ at: new Date().toISOString(), type: "server", threadId, payload: trimmed });
-      }
-    }
-    return entries;
+    await unlink(filePath);
+    return true;
   }
 
   threadLogPath(threadId: string): string {

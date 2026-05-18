@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx server/index.ts",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "tsx watch server/index.ts",
+    "dev:client": "vite --host 0.0.0.0",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
@@ -15,6 +17,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@clerk/backend": "^3.4.9",
+    "@clerk/react": "^6.6.4",
     "@vitejs/plugin-react": "^5.1.1",
     "lucide-react": "^0.561.0",
     "react": "^19.2.1",

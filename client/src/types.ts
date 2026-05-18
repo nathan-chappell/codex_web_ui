@@ -1,5 +1,21 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+export type AuthMode = "open" | "password" | "clerk";
+
+export interface AuthUser {
+  id: string;
+  email: string | null;
+  name: string | null;
+  role: string;
+}
+
+export interface AuthState {
+  authenticated: boolean;
+  mode: AuthMode;
+  warning?: string | null;
+  user?: AuthUser | null;
+}
+
 export interface Thread {
   id: string;
   name?: string | null;
@@ -66,6 +82,23 @@ export interface ServerEvent {
   type: string;
   payload: unknown;
   at: number;
+}
+
+export interface RepositoryEntry {
+  name: string;
+  path: string;
+  displayPath: string;
+  isGitRepo: boolean;
+  hidden: boolean;
+}
+
+export interface RepositoryBrowser {
+  path: string;
+  displayPath: string;
+  parentPath: string | null;
+  homePath: string;
+  isGitRepo: boolean;
+  entries: RepositoryEntry[];
 }
 
 export interface UiSettings {

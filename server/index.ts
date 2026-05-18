@@ -1,24 +1,35 @@
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { mkdir, readdir } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { createClerkClient, verifyToken } from "@clerk/backend";
 import { CodexBridge } from "./codexBridge.js";
 import { EventHub } from "./eventHub.js";
 import { SessionLogStore } from "./logStore.js";
 import type { JsonValue } from "./types.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const staticDir = path.resolve(__dirname, "../public");
-const projectRoot = path.resolve(__dirname, "../..");
+const projectRoot = process.cwd();
+const staticDir = path.join(projectRoot, "dist/public");
+const homeDir = os.homedir();
 
 loadEnvFile(path.join(projectRoot, ".env"));
 
 const PORT = Number(process.env.PORT || 4545);
 const HOST = process.env.HOST || "127.0.0.1";
-const PASSWORD = process.env.CODEX_WEB_UI_PASSWORD || "codex";
+const PASSWORD = process.env.CODEX_WEB_UI_PASSWORD || "";
 const SESSION_COOKIE = "codex_web_ui_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || "";
+const CLERK_PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY || "";
+const CLERK_JWT_KEY = process.env.CLERK_JWT_KEY || "";
+const CLERK_AUTHORIZED_PARTIES = parseCsvEnv(process.env.CLERK_AUTHORIZED_PARTIES);
+const AUTH_MODE: AuthMode = CLERK_SECRET_KEY && CLERK_PUBLISHABLE_KEY ? "clerk" : PASSWORD ? "password" : "open";
+const clerkClient = AUTH_MODE === "clerk"
+  ? createClerkClient({ secretKey: CLERK_SECRET_KEY, publishableKey: CLERK_PUBLISHABLE_KEY })
+  : null;
 
 const logs = new SessionLogStore(process.env.CODEX_WEB_UI_DATA_DIR || path.join(projectRoot, "data"));
 const hub = new EventHub();
@@ -26,15 +37,19 @@ const bridge = new CodexBridge(
   {
     command: process.env.CODEX_COMMAND || "codex",
     cwd: process.env.CODEX_CWD || projectRoot,
-    model: process.env.CODEX_MODEL || "",
-    reasoningEffort: process.env.CODEX_REASONING_EFFORT || "",
-    fastMode: process.env.CODEX_FAST_MODE === "1"
+    model: process.env.CODEX_MODEL || "gpt-5.5",
+    reasoningEffort: process.env.CODEX_REASONING_EFFORT || "high",
+    fastMode: process.env.CODEX_FAST_MODE !== "0"
   },
   hub,
   logs
 );
 
-const sessions = new Map<string, { createdAt: number }>();
+type AuthMode = "open" | "password" | "clerk";
+type AuthUser = { id: string; email: string | null; name: string | null; role: string };
+type AppSession = { createdAt: number; mode: AuthMode; user: AuthUser | null };
+
+const sessions = new Map<string, AppSession>();
 
 const mimeTypes: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -50,14 +65,44 @@ await logs.ensure();
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const startedAt = Date.now();
+    if (shouldLogHttpRequest(url.pathname)) {
+      res.once("finish", () => {
+        void logs.append({
+          type: "server",
+          method: "http/request",
+          payload: {
+            method: req.method || "",
+            path: url.pathname,
+            statusCode: res.statusCode,
+            durationMs: Date.now() - startedAt
+          }
+        });
+      });
+    }
 
     if (url.pathname === "/api/login" && req.method === "POST") {
+      if (AUTH_MODE !== "password") {
+        return sendJson(res, 400, { ok: false, error: "Password login is not enabled" });
+      }
       const body = await readJsonBody(req);
       if (!safePasswordEquals(typeof body.password === "string" ? body.password : "")) {
         return sendJson(res, 401, { ok: false, error: "Invalid password" });
       }
       const token = crypto.randomBytes(32).toString("base64url");
-      sessions.set(token, { createdAt: Date.now() });
+      sessions.set(token, { createdAt: Date.now(), mode: "password", user: null });
+      res.setHeader("Set-Cookie", makeCookie(token));
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/api/clerk/session" && req.method === "POST") {
+      if (AUTH_MODE !== "clerk") {
+        return sendJson(res, 400, { ok: false, error: "Clerk login is not enabled" });
+      }
+      const body = await readJsonBody(req);
+      const clerkUser = await authenticateClerkToken(typeof body.token === "string" ? body.token : "");
+      const token = crypto.randomBytes(32).toString("base64url");
+      sessions.set(token, { createdAt: Date.now(), mode: "clerk", user: clerkUser });
       res.setHeader("Set-Cookie", makeCookie(token));
       return sendJson(res, 200, { ok: true });
     }
@@ -72,7 +117,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/auth" && req.method === "GET") {
-      return sendJson(res, 200, { ok: true, authenticated: isAuthenticated(req) });
+      return sendJson(res, 200, { ok: true, ...authState(req) });
     }
 
     if (url.pathname.startsWith("/api/") && !isAuthenticated(req)) {
@@ -111,13 +156,19 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, status: bridge.summary() });
     }
 
-    if (url.pathname === "/api/logs" && req.method === "GET") {
-      return sendJson(res, 200, { ok: true, sessions: await logs.listSessions() });
+    if (url.pathname === "/api/repositories/browse" && req.method === "GET") {
+      return sendJson(res, 200, { ok: true, browser: await browseRepositories(url.searchParams.get("path")) });
     }
 
-    if (url.pathname.startsWith("/api/logs/") && req.method === "GET") {
+    if (url.pathname === "/api/repositories/create" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const browser = await createRepository(body.parentPath, body.name);
+      return sendJson(res, 200, { ok: true, browser });
+    }
+
+    if (url.pathname.startsWith("/api/logs/") && req.method === "DELETE") {
       const threadId = decodeURIComponent(url.pathname.slice("/api/logs/".length));
-      return sendJson(res, 200, { ok: true, threadId, entries: await logs.readThreadLog(threadId) });
+      return sendJson(res, 200, { ok: true, threadId, deleted: await logs.deleteThreadLog(threadId) });
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -126,14 +177,14 @@ const server = http.createServer(async (req, res) => {
 
     return serveStatic(url.pathname, res, req.method === "HEAD");
   } catch (error) {
-    const err = error as Error & { data?: unknown };
-    return sendJson(res, 500, { ok: false, error: err.message || "Internal server error", data: err.data });
+    const err = error as Error & { data?: unknown; statusCode?: number };
+    return sendJson(res, err.statusCode || 500, { ok: false, error: err.message || "Internal server error", data: err.data });
   }
 });
 
 server.listen(PORT, HOST, () => {
   console.log(`codex-web-ui listening on http://${HOST}:${PORT}`);
-  console.log(`password source: ${process.env.CODEX_WEB_UI_PASSWORD ? "CODEX_WEB_UI_PASSWORD" : "hardcoded fallback"}`);
+  console.log(`auth mode: ${AUTH_MODE}${AUTH_MODE === "open" ? " (no password or Clerk configured)" : ""}`);
 });
 
 process.on("SIGINT", shutdown);
@@ -169,25 +220,65 @@ function parseEnvValue(rawValue: string): string {
   return value;
 }
 
+function parseCsvEnv(value: string | undefined): string[] {
+  return (value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
 async function shutdown(): Promise<void> {
   await bridge.stop();
   process.exit(0);
 }
 
 function isAuthenticated(req: IncomingMessage): boolean {
+  if (AUTH_MODE === "open") {
+    return true;
+  }
+  return Boolean(currentSession(req));
+}
+
+function currentSession(req: IncomingMessage): AppSession | null {
   const token = getSessionToken(req);
   if (!token) {
-    return false;
+    return null;
   }
   const session = sessions.get(token);
   if (!session) {
-    return false;
+    return null;
   }
   if (Date.now() - session.createdAt > SESSION_TTL_MS) {
     sessions.delete(token);
-    return false;
+    return null;
   }
-  return true;
+  if (session.mode !== AUTH_MODE) {
+    sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function authState(req: IncomingMessage): { authenticated: boolean; mode: AuthMode; warning: string | null; user: AuthUser | null } {
+  if (AUTH_MODE === "open") {
+    return {
+      authenticated: true,
+      mode: "open",
+      warning: "No auth configured: anyone who can reach this server has full access.",
+      user: null
+    };
+  }
+  const session = currentSession(req);
+  return {
+    authenticated: Boolean(session),
+    mode: AUTH_MODE,
+    warning: null,
+    user: session?.user ?? null
+  };
 }
 
 function getSessionToken(req: IncomingMessage): string {
@@ -215,13 +306,152 @@ function clearCookie(): string {
   return `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
+function shouldLogHttpRequest(pathname: string): boolean {
+  return pathname.startsWith("/api/");
+}
+
 function safePasswordEquals(value: string): boolean {
+  if (!PASSWORD) {
+    return false;
+  }
   const provided = Buffer.from(value);
   const expected = Buffer.from(PASSWORD);
   if (provided.length !== expected.length) {
     return false;
   }
   return crypto.timingSafeEqual(provided, expected);
+}
+
+async function authenticateClerkToken(token: string): Promise<AuthUser> {
+  if (!token || !clerkClient) {
+    throw httpError(401, "Missing Clerk bearer token.");
+  }
+  const payload = await verifyToken(token, {
+    secretKey: CLERK_SECRET_KEY,
+    jwtKey: CLERK_JWT_KEY || undefined,
+    authorizedParties: CLERK_AUTHORIZED_PARTIES.length ? CLERK_AUTHORIZED_PARTIES : undefined
+  }).catch(() => {
+    throw httpError(401, "Invalid Clerk session.");
+  });
+  const clerkUserId = String(payload.sub || "").trim();
+  if (!clerkUserId) {
+    throw httpError(401, "Clerk session did not include a user id.");
+  }
+
+  const user = await clerkClient.users.getUser(clerkUserId);
+  const publicMetadata = asRecord(user.publicMetadata);
+  if (publicMetadata.active !== true) {
+    throw httpError(403, "This Clerk account is not active for the app.");
+  }
+  const role = publicMetadata.role === "admin" ? "admin" : "user";
+  const email = primaryEmailForClerkUser(user);
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || email;
+  return { id: user.id, email, name: name || null, role };
+}
+
+function primaryEmailForClerkUser(user: { primaryEmailAddressId: string | null; emailAddresses: { id: string; emailAddress: string }[] }): string | null {
+  const primary = user.emailAddresses.find((item) => item.id === user.primaryEmailAddressId) ?? user.emailAddresses[0];
+  return primary?.emailAddress?.trim().toLowerCase() || null;
+}
+
+function httpError(statusCode: number, message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+async function browseRepositories(inputPath: unknown): Promise<Record<string, unknown>> {
+  const currentPath = resolveExplorerPath(inputPath);
+  const stats = statSync(currentPath);
+  if (!stats.isDirectory()) {
+    throw new Error("Path is not a directory");
+  }
+  const entries = await readdir(currentPath, { withFileTypes: true });
+  const directories = entries
+    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+    .map((entry) => {
+      const entryPath = path.join(currentPath, entry.name);
+      let isDirectory = entry.isDirectory();
+      try {
+        isDirectory = statSync(entryPath).isDirectory();
+      } catch {
+        isDirectory = false;
+      }
+      return isDirectory
+        ? {
+            name: entry.name,
+            path: entryPath,
+            displayPath: displayPath(entryPath),
+            isGitRepo: isGitRepo(entryPath),
+            hidden: entry.name.startsWith(".")
+          }
+        : null;
+    })
+    .filter((entry): entry is { name: string; path: string; displayPath: string; isGitRepo: boolean; hidden: boolean } => Boolean(entry))
+    .sort((a, b) => Number(a.hidden) - Number(b.hidden) || Number(b.isGitRepo) - Number(a.isGitRepo) || a.name.localeCompare(b.name));
+
+  return {
+    path: currentPath,
+    displayPath: displayPath(currentPath),
+    parentPath: path.dirname(currentPath) === currentPath ? null : path.dirname(currentPath),
+    homePath: homeDir,
+    isGitRepo: isGitRepo(currentPath),
+    entries: directories
+  };
+}
+
+async function createRepository(parentPath: unknown, name: unknown): Promise<Record<string, unknown>> {
+  const parent = resolveExplorerPath(parentPath);
+  if (!statSync(parent).isDirectory()) {
+    throw new Error("Parent path is not a directory");
+  }
+  const repoName = typeof name === "string" ? name.trim() : "";
+  if (!repoName || repoName === "." || repoName === ".." || repoName.includes("/") || repoName.includes("\\")) {
+    throw new Error("Enter a single folder name for the new repository");
+  }
+  const repoPath = path.join(parent, repoName);
+  if (existsSync(repoPath)) {
+    throw new Error("A folder already exists with that name");
+  }
+  await mkdir(repoPath, { recursive: false });
+  await runGitInit(repoPath);
+  return browseRepositories(repoPath);
+}
+
+function resolveExplorerPath(inputPath: unknown): string {
+  const value = typeof inputPath === "string" && inputPath.trim() ? inputPath.trim() : homeDir;
+  if (value === "~") {
+    return homeDir;
+  }
+  if (value.startsWith("~/")) {
+    return path.resolve(homeDir, value.slice(2));
+  }
+  return path.resolve(path.isAbsolute(value) ? value : path.join(homeDir, value));
+}
+
+function displayPath(filePath: string): string {
+  const relative = path.relative(homeDir, filePath);
+  if (!relative) {
+    return "~";
+  }
+  if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
+    return `~/${relative}`;
+  }
+  return filePath;
+}
+
+function isGitRepo(dirPath: string): boolean {
+  return existsSync(path.join(dirPath, ".git"));
+}
+
+async function runGitInit(repoPath: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    execFile("git", ["init", "--", repoPath], (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {

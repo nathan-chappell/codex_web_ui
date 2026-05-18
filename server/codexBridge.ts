@@ -139,19 +139,7 @@ export class CodexBridge {
       error: null
     });
 
-    const args = ["app-server"];
-    if (this.config.model) {
-      args.push("-c", `model="${this.config.model}"`);
-    }
-    if (this.config.reasoningEffort) {
-      args.push("-c", `model_reasoning_effort="${this.config.reasoningEffort}"`);
-    }
-    args.push("--listen", "stdio://");
-    if (!this.config.fastMode) {
-      args.push("--disable", "fast_mode");
-    }
-
-    const proc = spawn(this.config.command, args, {
+    const proc = spawn(this.config.command, ["app-server", ...this.configArgs(), "--listen", "stdio://"], {
       cwd: this.config.cwd,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"]
@@ -189,6 +177,20 @@ export class CodexBridge {
     );
     this.notify("initialized");
     this.setStatus({ state: "running" });
+  }
+
+  private configArgs(): string[] {
+    const args: string[] = [];
+    if (this.config.model) {
+      args.push("-c", `model="${this.config.model}"`);
+    }
+    if (this.config.reasoningEffort) {
+      args.push("-c", `model_reasoning_effort="${this.config.reasoningEffort}"`);
+    }
+    if (!this.config.fastMode) {
+      args.push("--disable", "fast_mode");
+    }
+    return args;
   }
 
   private write(message: Record<string, unknown>): void {

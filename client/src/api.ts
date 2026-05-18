@@ -1,12 +1,16 @@
-import type { JsonValue, LogEntry, ServerEvent, ServerStatus, SessionIndexRecord } from "./types";
+import type { AuthState, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus } from "./types";
 
-export async function getAuth(): Promise<boolean> {
-  const body = await getJson<{ authenticated: boolean }>("/api/auth");
-  return body.authenticated;
+export async function getAuth(): Promise<AuthState> {
+  const body = await getJson<AuthState>("/api/auth");
+  return body;
 }
 
 export async function login(password: string): Promise<void> {
   await postJson("/api/login", { password });
+}
+
+export async function createClerkSession(token: string): Promise<void> {
+  await postJson("/api/clerk/session", { token });
 }
 
 export async function logout(): Promise<void> {
@@ -28,14 +32,19 @@ export async function rpc<T = unknown>(method: string, params: JsonValue = {}): 
   return body.result;
 }
 
-export async function listLoggedSessions(): Promise<SessionIndexRecord[]> {
-  const body = await getJson<{ sessions: SessionIndexRecord[] }>("/api/logs");
-  return body.sessions;
+export async function deleteThreadLog(threadId: string): Promise<void> {
+  await deleteJson(`/api/logs/${encodeURIComponent(threadId)}`);
 }
 
-export async function readSessionLog(threadId: string): Promise<LogEntry[]> {
-  const body = await getJson<{ entries: LogEntry[] }>(`/api/logs/${encodeURIComponent(threadId)}`);
-  return body.entries;
+export async function browseRepositories(path?: string): Promise<RepositoryBrowser> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  const body = await getJson<{ browser: RepositoryBrowser }>(`/api/repositories/browse${query}`);
+  return body.browser;
+}
+
+export async function createRepository(parentPath: string, name: string): Promise<RepositoryBrowser> {
+  const body = await postJson<{ browser: RepositoryBrowser }>("/api/repositories/create", { parentPath, name });
+  return body.browser;
 }
 
 export function openEventStream(onEvent: (event: ServerEvent) => void, onHello: (events: ServerEvent[]) => void): EventSource {
@@ -61,6 +70,14 @@ async function postJson<T = unknown>(url: string, payload: unknown): Promise<T> 
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
+  });
+  return parseResponse<T>(response);
+}
+
+async function deleteJson<T = unknown>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    method: "DELETE",
+    credentials: "same-origin"
   });
   return parseResponse<T>(response);
 }

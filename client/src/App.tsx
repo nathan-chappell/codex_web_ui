@@ -1,112 +1,107 @@
 import {
   Archive,
+  ChevronUp,
+  ChevronsDown,
+  Folder,
+  FolderGit2,
   GitFork,
+  Home,
   LogOut,
   MessageSquarePlus,
+  Minimize2,
   PauseCircle,
-  Play,
+  Plus,
   RefreshCw,
-  RotateCcw,
   Send,
-  Settings,
-  SquareTerminal
+  Trash2,
+  X
 } from "lucide-react";
-import { FormEvent, memo, useEffect, useMemo, useRef, useState } from "react";
+import { SignInButton, SignUpButton, UserButton, useAuth, useClerk } from "@clerk/react";
+import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  browseRepositories,
+  createClerkSession,
+  createRepository,
+  deleteThreadLog,
   getAuth,
   getStatus,
-  listLoggedSessions,
   login,
   logout,
   openEventStream,
-  readSessionLog,
   restartServer,
   rpc
 } from "./api";
-import type { JsonValue, LogEntry, ServerEvent, ServerStatus, SessionIndexRecord, Thread, ThreadItem, Turn, UiSettings } from "./types";
-
-const rpcMethods = [
-  "thread/start",
-  "thread/resume",
-  "thread/fork",
-  "thread/archive",
-  "thread/unarchive",
-  "thread/name/set",
-  "thread/compact/start",
-  "thread/rollback",
-  "thread/list",
-  "thread/loaded/list",
-  "thread/read",
-  "thread/inject_items",
-  "turn/start",
-  "turn/steer",
-  "turn/interrupt",
-  "review/start",
-  "model/list",
-  "mcpServerStatus/list",
-  "mcpServer/resource/read",
-  "mcpServer/tool/call",
-  "app/list",
-  "plugin/list",
-  "skills/list",
-  "hooks/list",
-  "account/read",
-  "config/read",
-  "fs/readDirectory",
-  "fs/readFile",
-  "command/exec"
-];
+import type { AuthState, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
+import { CLERK_PUBLISHABLE_KEY } from "./authConfig";
 
 const defaultSettings: UiSettings = {
   cwd: "",
-  model: "",
-  effort: "",
-  approvalPolicy: "",
-  sandbox: ""
+  model: "gpt-5.5",
+  effort: "high",
+  approvalPolicy: "on-request",
+  sandbox: "danger-full-access"
 };
 
-type SendMode = "auto" | "new" | "steer";
-type MainView = "turns" | "logs" | "raw";
-type SideView = "events" | "rpc";
+type ComposerAction = "send" | "steer";
+type MobilePane = "sessions" | "thread";
+type ThreadPaneCount = 1 | 2 | 4;
 
 const DEFAULT_RENDERED_TURNS = 40;
-const DEFAULT_RENDERED_LOGS = 400;
+const SESSION_PAGE_SIZE = 50;
+const mobilePanes: MobilePane[] = ["sessions", "thread"];
 
 export default function App() {
+  const [authInfo, setAuthInfo] = useState<AuthState | null>(null);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [serverStatus, setServerStatus] = useState<ServerStatus>({ state: "stopped" });
   const [sessions, setSessions] = useState<Thread[]>([]);
-  const [loggedSessions, setLoggedSessions] = useState<SessionIndexRecord[]>([]);
   const [loadedThreadIds, setLoadedThreadIds] = useState<Set<string>>(new Set());
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [events, setEvents] = useState<ServerEvent[]>([]);
+  const [openThreadIds, setOpenThreadIds] = useState<(string | null)[]>([null]);
+  const [openThreads, setOpenThreads] = useState<Record<string, Thread>>({});
+  const [activePaneIndex, setActivePaneIndex] = useState(0);
+  const [sessionPreviews, setSessionPreviews] = useState<Record<string, string>>({});
+  const [sessionPage, setSessionPage] = useState(1);
+  const [hasMoreSessions, setHasMoreSessions] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
+  const [sidebarWidth, setSidebarWidth] = useState(330);
   const [showArchived, setShowArchived] = useState(false);
+  const [recentOnly, setRecentOnly] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [sendMode, setSendMode] = useState<SendMode>("auto");
-  const [mainView, setMainView] = useState<MainView>("turns");
-  const [sideView, setSideView] = useState<SideView>("events");
+  const [mobilePane, setMobilePane] = useState<MobilePane>("sessions");
+  const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(1);
   const [toast, setToast] = useState("");
-  const [settings, setSettings] = useState<UiSettings>(loadSettings);
+  const [settings, setSettings] = useState<UiSettings>({ ...defaultSettings });
   const [newSessionOpen, setNewSessionOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTurns, setActiveTurns] = useState<Record<string, string>>({});
 
   const eventSourceRef = useRef<EventSource | null>(null);
-  const eventsRef = useRef<ServerEvent[]>([]);
-  const eventFlushTimerRef = useRef<number | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const listTimerRef = useRef<number | null>(null);
-  const selectedThreadIdRef = useRef<string | null>(null);
+  const openThreadIdsRef = useRef<(string | null)[]>([null]);
+  const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean } | null>(null);
+  const resizingSidebarRef = useRef(false);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressActivatedRef = useRef(false);
+  const sessionClickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      clearSessionLongPress();
+      clearSessionClickTimer();
+    };
+  }, []);
 
   useEffect(() => {
     getAuth()
-      .then(setAuthenticated)
+      .then(applyAuth)
       .catch(() => setAuthenticated(false));
   }, []);
 
@@ -119,22 +114,14 @@ export default function App() {
     eventSourceRef.current?.close();
     const source = openEventStream(
       (event) => {
-        rememberUiEvent(event);
         handleServerEvent(event);
       },
-      (history) => {
-        eventsRef.current = trimEvents(history.filter(isUsefulUiEvent));
-        setEvents(eventsRef.current);
-      }
+      () => undefined
     );
     source.onerror = () => setServerStatus((current) => ({ ...current, state: "disconnected", error: "Event stream disconnected" }));
     eventSourceRef.current = source;
     return () => {
       source.close();
-      if (eventFlushTimerRef.current) {
-        window.clearTimeout(eventFlushTimerRef.current);
-        eventFlushTimerRef.current = null;
-      }
     };
   }, [authenticated]);
 
@@ -145,31 +132,25 @@ export default function App() {
       }
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [showArchived, searchTerm]);
+  }, [showArchived, searchTerm, sessionPage]);
+
+  const mergedSessions = useMemo(() => [...sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)), [sessions]);
+  const visibleThreads = useMemo(() => (recentOnly ? mostRecentThreadsByFolder(mergedSessions) : mergedSessions), [mergedSessions, recentOnly]);
+  const groupedThreads = useMemo(() => groupThreadsByFolder(visibleThreads), [visibleThreads]);
+  const paneThreadIds = useMemo(
+    () => Array.from({ length: threadPaneCount }, (_, index) => openThreadIds[index] ?? null),
+    [openThreadIds, threadPaneCount]
+  );
+  const selectionActive = selectedSessionIds.size > 0;
 
   useEffect(() => {
-    selectedThreadIdRef.current = selectedThreadId;
-  }, [selectedThreadId]);
+    setOpenThreadIds((current) => Array.from({ length: threadPaneCount }, (_, index) => current[index] ?? null));
+    setActivePaneIndex((current) => Math.min(current, threadPaneCount - 1));
+  }, [threadPaneCount]);
 
-  const mergedSessions = useMemo(() => {
-    const byId = new Map<string, Thread>();
-    for (const logged of loggedSessions) {
-      byId.set(logged.id, {
-        id: logged.id,
-        name: logged.name,
-        preview: logged.preview,
-        cwd: logged.cwd,
-        sessionId: logged.sessionId,
-        createdAt: logged.createdAt ?? undefined,
-        updatedAt: logged.updatedAt ?? undefined,
-        status: statusFromLogged(logged.status)
-      });
-    }
-    for (const thread of sessions) {
-      byId.set(thread.id, thread);
-    }
-    return [...byId.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-  }, [sessions, loggedSessions]);
+  useEffect(() => {
+    openThreadIdsRef.current = openThreadIds;
+  }, [openThreadIds]);
 
   if (authenticated === null) {
     return <div className="boot">Loading</div>;
@@ -178,6 +159,15 @@ export default function App() {
   if (!authenticated) {
     return (
       <main className="login-screen">
+        {authInfo?.mode === "clerk" ? (
+          <ClerkLoginPanel
+            error={loginError}
+            onError={setLoginError}
+            onAuthenticated={async () => {
+              applyAuth(await getAuth());
+            }}
+          />
+        ) : (
         <form className="login-panel" onSubmit={handleLogin}>
           <div>
             <p className="eyebrow">Remote control</p>
@@ -192,175 +182,234 @@ export default function App() {
           </button>
           <p className="error-text">{loginError}</p>
         </form>
+        )}
       </main>
     );
   }
 
-  const selectedStatus = statusType(selectedThread);
-  const activeTurnId = selectedThread ? activeTurnFromThread(selectedThread) || activeTurns[selectedThread.id] : null;
-
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${authInfo?.warning ? "auth-warning-mode" : ""}`}>
       <header className="topbar">
         <div className="brand-block">
           <div className="mark">CX</div>
           <div>
             <strong>Codex Web UI</strong>
             <span>{serverStatus.error || `${serverStatus.command ?? "codex"} in ${serverStatus.cwd ?? ""}`}</span>
+            {authInfo?.warning && <span className="auth-warning-text">{authInfo.warning}</span>}
           </div>
         </div>
         <div className="top-actions">
           <StatusBadge value={serverStatus.state} />
           <button className="ghost-button" type="button" onClick={handleRestart}>
-            <RefreshCw size={16} /> Restart
+            <RefreshCw size={16} /> Reconnect
           </button>
-          <button className="ghost-button" type="button" onClick={() => setSettingsOpen(true)}>
-            <Settings size={16} /> Settings
-          </button>
-          <button className="ghost-button" type="button" onClick={handleLogout}>
-            <LogOut size={16} /> Logout
-          </button>
+          <LogoutButton authMode={authInfo?.mode ?? "password"} onLogout={handleLogout} />
         </div>
       </header>
 
-      <section className="layout">
+      <nav className="mobile-pane-tabs" aria-label="Panes">
+        <button className={mobilePane === "sessions" ? "selected" : ""} type="button" onClick={() => setMobilePane("sessions")}>
+          Threads
+        </button>
+        <button className={mobilePane === "thread" ? "selected" : ""} type="button" onClick={() => setMobilePane("thread")}>
+          Thread
+        </button>
+      </nav>
+
+      <section
+        style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+        className={`layout mobile-pane-${mobilePane}`}
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          touchStartRef.current = touch
+            ? { x: touch.clientX, y: touch.clientY, paneSwipeBlocked: isWithinHorizontalScroller(event.target, event.currentTarget) }
+            : null;
+        }}
+        onTouchEnd={(event) => {
+          const start = touchStartRef.current;
+          const touch = event.changedTouches[0];
+          touchStartRef.current = null;
+          if (!start || !touch) {
+            return;
+          }
+          if (start.paneSwipeBlocked) {
+            return;
+          }
+          const deltaX = touch.clientX - start.x;
+          const deltaY = touch.clientY - start.y;
+          if (Math.abs(deltaX) < 70 || Math.abs(deltaX) < Math.abs(deltaY) * 1.3) {
+            return;
+          }
+          switchMobilePane(deltaX < 0 ? 1 : -1);
+        }}
+      >
         <aside className="sessions-panel">
           <div className="panel-heading">
             <div>
-              <h2>Sessions</h2>
-              <span>{mergedSessions.length} available</span>
+              <h2>Threads</h2>
+              <span>{visibleThreads.length}{hasMoreSessions ? "+" : ""} loaded</span>
             </div>
-            <button className="icon-button" type="button" onClick={() => setNewSessionOpen(true)} title="New session">
-              <MessageSquarePlus size={18} />
-            </button>
+            <div className="panel-actions">
+              <label className="compact-checkbox" title="Show only recent threads">
+                <input type="checkbox" checked={recentOnly} onChange={(event) => setRecentOnlyFilter(event.target.checked)} />
+                <span>Recent</span>
+              </label>
+              <label className="compact-checkbox" title="Show archived threads">
+                <input type="checkbox" checked={showArchived} onChange={(event) => switchArchiveFilter(event.target.checked)} />
+                <span>Archived</span>
+              </label>
+              <button className="icon-button" type="button" onClick={() => loadSessions()} title="Refresh threads" aria-label="Refresh threads">
+                <RefreshCw size={17} />
+              </button>
+              <button className="icon-button" type="button" onClick={() => setNewSessionOpen(true)} title="New thread" aria-label="New thread">
+                <MessageSquarePlus size={18} />
+              </button>
+            </div>
           </div>
           <div className="session-tools">
             <label className="field">
               <span>Search</span>
-              <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Title, preview, cwd" />
+              <input
+                value={searchTerm}
+                onChange={(event) => {
+                  setSessionPage(1);
+                  clearSessionSelection();
+                  setSearchTerm(event.target.value);
+                }}
+                placeholder="Title, preview, cwd"
+              />
             </label>
-            <div className="segmented">
-              <button className={!showArchived ? "selected" : ""} type="button" onClick={() => setShowArchived(false)}>
-                Active
-              </button>
-              <button className={showArchived ? "selected" : ""} type="button" onClick={() => setShowArchived(true)}>
-                Archived
-              </button>
-            </div>
-            <button className="secondary-button" type="button" onClick={loadSessions}>
-              <RefreshCw size={16} /> Refresh
-            </button>
-          </div>
-          <div className="sessions-list">
-            {mergedSessions.length === 0 ? (
-              <p className="muted empty-pad">No sessions found.</p>
-            ) : (
-              mergedSessions.map((thread) => (
-                <button
-                  key={thread.id}
-                  type="button"
-                  className={`session-row ${thread.id === selectedThreadId ? "selected" : ""}`}
-                  onClick={() => selectThread(thread.id)}
-                >
-                  <strong>{titleForThread(thread)}</strong>
-                  <p>{thread.preview || thread.cwd || thread.id}</p>
-                  <div className="session-meta-row">
-                    <StatusBadge value={statusType(thread)} />
-                    <span className="muted">{formatDate(thread.updatedAt)}</span>
-                  </div>
+            {selectionActive && (
+              <div className="selection-tools">
+                <span>{selectedSessionIds.size} selected</span>
+                <button className="secondary-button" type="button" onClick={archiveSelectedSessions}>
+                  <Archive size={15} /> {showArchived ? "Unarchive" : "Archive"}
                 </button>
+                {showArchived && (
+                  <button className="danger-button" type="button" onClick={deleteSelectedArchiveFiles}>
+                    <Trash2 size={15} /> Delete file
+                  </button>
+                )}
+                <button className="icon-button" type="button" onClick={clearSessionSelection} title="Clear selection" aria-label="Clear selection">
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+          </div>
+          <div className={`sessions-list ${selectionActive ? "selecting" : ""}`} onScroll={handleSessionsScroll}>
+            {mergedSessions.length === 0 ? (
+              <p className="muted empty-pad">No threads found.</p>
+            ) : (
+              groupedThreads.map((group) => (
+                <section className="thread-group" key={group.key}>
+                  <div className="thread-group-heading">
+                    <strong>{group.label}</strong>
+                    <span>{group.threads.length}</span>
+                  </div>
+                  {group.threads.map((thread) => (
+                    <button
+                      key={thread.id}
+                      type="button"
+                      className={`session-row ${thread.id === selectedThreadId ? "selected" : ""} ${selectedSessionIds.has(thread.id) ? "multi-selected" : ""}`}
+                      aria-pressed={selectedSessionIds.has(thread.id)}
+                      onClick={(event) => handleSessionRowClick(event, thread.id)}
+                      onContextMenu={(event) => event.preventDefault()}
+                      onPointerDown={(event) => startSessionLongPress(event, thread.id)}
+                      onPointerUp={clearSessionLongPress}
+                      onPointerCancel={clearSessionLongPress}
+                      onPointerLeave={clearSessionLongPress}
+                    >
+                      <span className="session-check" aria-hidden="true" />
+                      <strong>{titleForThread(thread)}</strong>
+                      <p>{sessionPreviews[thread.id] || thread.preview || thread.id}</p>
+                      <div className="session-meta-row">
+                        <StatusBadge value={statusType(thread)} />
+                        <span className="muted">{formatDate(thread.updatedAt)}</span>
+                      </div>
+                    </button>
+                  ))}
+                </section>
               ))
+            )}
+            {hasMoreSessions && (
+              <button className="load-more-button" type="button" onClick={loadMoreSessions} disabled={sessionsLoading}>
+                {sessionsLoading ? "Loading" : "Load more"}
+              </button>
             )}
           </div>
         </aside>
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-label="Resize threads sidebar"
+          aria-orientation="vertical"
+          onPointerDown={(event) => {
+            resizingSidebarRef.current = true;
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!resizingSidebarRef.current) {
+              return;
+            }
+            setSidebarWidth(Math.min(520, Math.max(240, event.clientX)));
+          }}
+          onPointerUp={(event) => {
+            resizingSidebarRef.current = false;
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onPointerCancel={() => {
+            resizingSidebarRef.current = false;
+          }}
+        />
 
-        <section className="thread-panel">
-          {!selectedThread ? (
-            <div className="empty-state">
-              <h2>Select a session</h2>
-              <p>Choose an existing session or start a new one.</p>
-            </div>
-          ) : (
-            <>
-              <header className="thread-header">
-                <div className="thread-title-block">
-                  <StatusBadge value={selectedStatus} />
-                  <h2>{titleForThread(selectedThread)}</h2>
-                  <p>{selectedThread.cwd || "cwd unavailable"} | {selectedThread.id}</p>
-                </div>
-                <div className="thread-actions">
-                  <button className="ghost-button" type="button" onClick={resumeSelectedThread}>
-                    <Play size={16} /> Load
-                  </button>
-                  <button className="ghost-button" type="button" onClick={renameSelectedThread}>Rename</button>
-                  <button className="ghost-button" type="button" onClick={forkSelectedThread}>
-                    <GitFork size={16} /> Fork
-                  </button>
-                  <button className="ghost-button" type="button" onClick={compactSelectedThread}>Compact</button>
-                  <button className="ghost-button" type="button" onClick={rollbackSelectedThread}>
-                    <RotateCcw size={16} /> Rollback
-                  </button>
-                  <button className="ghost-button" type="button" onClick={archiveSelectedThread}>
-                    <Archive size={16} /> {showArchived ? "Unarchive" : "Archive"}
-                  </button>
-                </div>
-              </header>
-
-              <div className="view-tabs">
-                <button className={mainView === "turns" ? "selected" : ""} onClick={() => setMainView("turns")} type="button">Turns</button>
-                <button className={mainView === "logs" ? "selected" : ""} onClick={() => setMainView("logs")} type="button">File Log</button>
-                <button className={mainView === "raw" ? "selected" : ""} onClick={() => setMainView("raw")} type="button">Raw</button>
-              </div>
-
-              <div className="conversation">
-                {mainView === "turns" && <TurnHistory turns={selectedThread.turns ?? []} />}
-                {mainView === "logs" && <FileLog entries={logs} />}
-                {mainView === "raw" && <pre className="json-block">{JSON.stringify(selectedThread, null, 2)}</pre>}
-              </div>
-
-              <Composer
-                activeTurnId={activeTurnId}
-                mode={sendMode}
-                onInterrupt={interruptTurn}
-                onModeChange={setSendMode}
-                onSend={sendMessageText}
-              />
-            </>
-          )}
+        <section className={`thread-workspace panes-${threadPaneCount}`}>
+          <div className="thread-view-controls" aria-label="Thread layout">
+            {[1, 2, 4].map((count) => (
+              <button
+                className={threadPaneCount === count ? "selected" : ""}
+                key={count}
+                type="button"
+                onClick={() => setThreadPaneCount(count as ThreadPaneCount)}
+              >
+                {count}
+              </button>
+            ))}
+          </div>
+          <div className="thread-grid">
+            {paneThreadIds.map((threadId, paneIndex) => {
+              const thread = threadId ? openThreads[threadId] ?? null : null;
+              return (
+                <ThreadPane
+                  activeTurnId={thread ? activeTurnFromThread(thread) || activeTurns[thread.id] || null : null}
+                  allThreads={mergedSessions}
+                  archiveLabel={showArchived ? "Unarchive" : "Archive"}
+                  isActive={paneIndex === activePaneIndex}
+                  key={paneIndex}
+                  onActivate={() => setActivePaneIndex(paneIndex)}
+                  onArchive={() => thread && archiveThread(thread, paneIndex)}
+                  onCompact={() => thread && compactThread(thread)}
+                  onFork={() => thread && forkThread(thread, paneIndex)}
+                  onInterrupt={() => thread && interruptThread(thread)}
+                  onRename={(name) => (thread ? renameThread(thread, name) : Promise.resolve())}
+                  onSelectThread={(nextThreadId) => selectThread(nextThreadId, paneIndex)}
+                  onSend={(text, action) => (thread ? sendMessageText(thread, text, action) : Promise.resolve(false))}
+                  paneCount={threadPaneCount}
+                  thread={thread}
+                />
+              );
+            })}
+          </div>
         </section>
 
-        <aside className="activity-panel">
-          <div className="tabs">
-            <button className={sideView === "events" ? "selected" : ""} onClick={() => setSideView("events")} type="button">Events</button>
-            <button className={sideView === "rpc" ? "selected" : ""} onClick={() => setSideView("rpc")} type="button">Raw RPC</button>
-          </div>
-          {sideView === "events" ? (
-            <EventsList events={events} />
-          ) : (
-            <RawRpcPanel />
-          )}
-        </aside>
       </section>
 
       {newSessionOpen && (
         <SessionModal
-          title="New Session"
+          title="New Thread"
           settings={settings}
           onClose={() => setNewSessionOpen(false)}
           onSubmit={createSession}
           includePrompt
-        />
-      )}
-      {settingsOpen && (
-        <SessionModal
-          title="Defaults"
-          settings={settings}
-          onClose={() => setSettingsOpen(false)}
-          onSubmit={(next) => {
-            setSettings(next.settings);
-            localStorage.setItem("codex-web-ui-settings", JSON.stringify(next.settings));
-            setSettingsOpen(false);
-          }}
         />
       )}
       {toast && <div className="toast">{toast}</div>}
@@ -373,7 +422,7 @@ export default function App() {
     try {
       await login(password);
       setPassword("");
-      setAuthenticated(true);
+      applyAuth(await getAuth());
     } catch (error) {
       setLoginError(messageFromError(error));
     }
@@ -382,115 +431,278 @@ export default function App() {
   async function handleLogout() {
     await logout().catch(() => undefined);
     eventSourceRef.current?.close();
-    setAuthenticated(false);
+    applyAuth(await getAuth().catch(() => ({ authenticated: false, mode: "password" })));
+  }
+
+  function applyAuth(nextAuth: AuthState) {
+    setAuthInfo(nextAuth);
+    setAuthenticated(nextAuth.authenticated);
   }
 
   async function handleRestart() {
     try {
       setServerStatus(await restartServer());
-      showToast("App server restarted");
+      showToast("App server reconnected");
       await loadSessions();
     } catch (error) {
       showToast(error);
     }
   }
 
-  async function loadSessions() {
+  async function loadSessions(page = sessionPage) {
+    setSessionsLoading(true);
     try {
+      const limit = page * SESSION_PAGE_SIZE;
       const params: Record<string, JsonValue> = {
         archived: showArchived,
-        limit: 100,
+        limit,
         sortKey: "updated_at",
         sortDirection: "desc"
       };
       if (searchTerm.trim()) {
         params.searchTerm = searchTerm.trim();
       }
-      const [threadResult, loadedResult, logResult] = await Promise.allSettled([
+      const [threadResult, loadedResult] = await Promise.allSettled([
         rpc<{ data: Thread[] }>("thread/list", params),
-        rpc<{ data: string[] }>("thread/loaded/list", { limit: 500 }),
-        listLoggedSessions()
+        rpc<{ data: string[] }>("thread/loaded/list", { limit: 500 })
       ]);
       if (threadResult.status === "fulfilled") {
-        setSessions(threadResult.value.data ?? []);
+        const nextSessions = threadResult.value.data ?? [];
+        setSessions(nextSessions);
+        setHasMoreSessions(nextSessions.length >= limit);
+        setSessionPreviews((current) => {
+          const next = { ...current };
+          for (const thread of nextSessions) {
+            if (!next[thread.id] && thread.preview) {
+              next[thread.id] = thread.preview;
+            }
+          }
+          return next;
+        });
       }
       if (loadedResult.status === "fulfilled") {
         setLoadedThreadIds(new Set(loadedResult.value.data ?? []));
-      }
-      if (logResult.status === "fulfilled") {
-        setLoggedSessions(logResult.value);
       }
       if (threadResult.status === "rejected") {
         throw threadResult.reason;
       }
     } catch (error) {
       showToast(error);
+    } finally {
+      setSessionsLoading(false);
     }
   }
 
-  async function selectThread(threadId: string) {
-    setSelectedThreadId(threadId);
-    await readThread(threadId);
+  function switchArchiveFilter(archived: boolean) {
+    setShowArchived(archived);
+    setSessionPage(1);
+    clearSessionSelection();
   }
 
-  async function readThread(threadId: string) {
-    const logPromise = readSessionLog(threadId).then(setLogs).catch(() => setLogs([]));
-    try {
-      const result = await rpc<{ thread: Thread }>("thread/read", { threadId, includeTurns: true });
-      setSelectedThread(result.thread);
-      rememberActiveTurn(result.thread);
-    } catch (error) {
-      const logged = loggedSessions.find((item) => item.id === threadId);
-      if (logged) {
-        setSelectedThread({
-          id: logged.id,
-          name: logged.name,
-          preview: logged.preview,
-          cwd: logged.cwd,
-          sessionId: logged.sessionId,
-          createdAt: logged.createdAt ?? undefined,
-          updatedAt: logged.updatedAt ?? undefined,
-          status: statusFromLogged(logged.status)
-        });
-      } else {
-        showToast(error);
-      }
-    }
-    await logPromise;
+  function setRecentOnlyFilter(enabled: boolean) {
+    clearSessionSelection();
+    setRecentOnly(enabled);
   }
 
-  async function resumeSelectedThread() {
-    if (!selectedThread) {
+  function loadMoreSessions() {
+    if (sessionsLoading || !hasMoreSessions) {
       return;
     }
+    setSessionsLoading(true);
+    setSessionPage((current) => current + 1);
+  }
+
+  function handleSessionsScroll(event: UIEvent<HTMLDivElement>) {
+    const element = event.currentTarget;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight < 120) {
+      loadMoreSessions();
+    }
+  }
+
+  function handleSessionRowClick(event: MouseEvent<HTMLButtonElement>, threadId: string) {
+    if (longPressActivatedRef.current) {
+      longPressActivatedRef.current = false;
+      return;
+    }
+    if (selectionActive) {
+      toggleSessionSelection(threadId);
+      return;
+    }
+    if (event.detail > 1) {
+      clearSessionClickTimer();
+      toggleSessionSelection(threadId);
+      return;
+    }
+    clearSessionClickTimer();
+    sessionClickTimerRef.current = window.setTimeout(() => {
+      sessionClickTimerRef.current = null;
+      selectThread(threadId, activePaneIndex);
+    }, 220);
+  }
+
+  function startSessionLongPress(event: PointerEvent<HTMLButtonElement>, threadId: string) {
+    if (event.pointerType === "mouse") {
+      return;
+    }
+    clearSessionLongPress();
+    longPressActivatedRef.current = false;
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressActivatedRef.current = true;
+      toggleSessionSelection(threadId);
+    }, 550);
+  }
+
+  function clearSessionLongPress() {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function clearSessionClickTimer() {
+    if (sessionClickTimerRef.current) {
+      window.clearTimeout(sessionClickTimerRef.current);
+      sessionClickTimerRef.current = null;
+    }
+  }
+
+  function toggleSessionSelection(threadId: string) {
+    setSelectedSessionIds((current) => {
+      const next = new Set(current);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  }
+
+  function clearSessionSelection() {
+    setSelectedSessionIds(new Set());
+  }
+
+  async function archiveSelectedSessions() {
+    const threadIds = [...selectedSessionIds];
+    if (threadIds.length === 0) {
+      return;
+    }
+    const method = showArchived ? "thread/unarchive" : "thread/archive";
     try {
-      const result = await rpc<{ thread: Thread }>("thread/resume", buildThreadLoadParams(selectedThread.id));
-      setSelectedThread(result.thread);
-      rememberActiveTurn(result.thread);
-      setLoadedThreadIds((current) => new Set([...current, result.thread.id]));
-      await loadSessions();
+      await Promise.all(threadIds.map((threadId) => rpc(method, { threadId })));
+      if (!showArchived) {
+        closeOpenThreads(threadIds);
+      }
+      clearSessionSelection();
+      await loadSessions(1);
+      setSessionPage(1);
     } catch (error) {
       showToast(error);
     }
   }
 
-  async function sendMessageText(text: string): Promise<boolean> {
+  async function deleteSelectedArchiveFiles() {
+    const threadIds = [...selectedSessionIds];
+    if (threadIds.length === 0 || !window.confirm(`Delete ${threadIds.length} selected archive file${threadIds.length === 1 ? "" : "s"}?`)) {
+      return;
+    }
+    try {
+      await Promise.all(threadIds.map(async (threadId) => {
+        await rpc("thread/delete", { threadId }).catch(() => undefined);
+        await deleteThreadLog(threadId);
+      }));
+      closeOpenThreads(threadIds);
+      clearSessionSelection();
+      await loadSessions(1);
+      setSessionPage(1);
+    } catch (error) {
+      showToast(error);
+    }
+  }
+
+  function rememberOpenThread(thread: Thread, paneIndex = activePaneIndex) {
+    const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
+    setOpenThreads((current) => ({ ...current, [thread.id]: thread }));
+    setOpenThreadIds((current) => {
+      const next = Array.from({ length: threadPaneCount }, (_, index) => current[index] ?? null);
+      next[targetPaneIndex] = thread.id;
+      return next;
+    });
+    if (targetPaneIndex === activePaneIndex) {
+      setSelectedThreadId(thread.id);
+      setSelectedThread(thread);
+    }
+  }
+
+  function closeOpenThreads(threadIds: string[]) {
+    const closing = new Set(threadIds);
+    setOpenThreadIds((current) => current.map((id) => (id && closing.has(id) ? null : id)));
+    setOpenThreads((current) => {
+      const next = { ...current };
+      for (const threadId of closing) {
+        delete next[threadId];
+      }
+      return next;
+    });
+    setSelectedThread((current) => (current && closing.has(current.id) ? null : current));
+    setSelectedThreadId((current) => (current && closing.has(current) ? null : current));
+  }
+
+  async function selectThread(threadId: string, paneIndex = activePaneIndex) {
+    setActivePaneIndex(paneIndex);
+    setSelectedThreadId(threadId);
+    setMobilePane("thread");
+    const thread = await resumeThread(threadId, paneIndex);
+    if (thread) {
+      setSelectedThread(thread);
+    }
+  }
+
+  async function readThread(threadId: string, paneIndex = openThreadIds.indexOf(threadId)): Promise<Thread | null> {
+    try {
+      const result = await rpc<{ thread: Thread }>("thread/read", { threadId, includeTurns: true });
+      rememberOpenThread(result.thread, paneIndex >= 0 ? paneIndex : activePaneIndex);
+      rememberSessionPreview(result.thread);
+      rememberActiveTurn(result.thread);
+      return result.thread;
+    } catch (error) {
+      showToast(error);
+      return null;
+    }
+  }
+
+  async function resumeThread(threadId: string, paneIndex = activePaneIndex): Promise<Thread | null> {
+    try {
+      const result = await rpc<{ thread: Thread }>("thread/resume", buildThreadLoadParams(threadId));
+      rememberOpenThread(result.thread, paneIndex);
+      rememberSessionPreview(result.thread);
+      rememberActiveTurn(result.thread);
+      setLoadedThreadIds((current) => new Set([...current, result.thread.id]));
+      scheduleThreadRefresh(result.thread.id, 700);
+      scheduleListRefresh(1000);
+      return result.thread;
+    } catch (error) {
+      return readThread(threadId, paneIndex);
+    }
+  }
+
+  async function sendMessageText(selected: Thread, text: string, action: ComposerAction = "send"): Promise<boolean> {
     const trimmedText = text.trim();
-    if (!selectedThread || !trimmedText) {
+    if (!trimmedText) {
       return false;
     }
     try {
-      let thread = selectedThread;
+      let thread = selected;
       if (!loadedThreadIds.has(thread.id) || statusType(thread) === "notLoaded") {
         const resumed = await rpc<{ thread: Thread }>("thread/resume", buildThreadLoadParams(thread.id));
         thread = resumed.thread;
-        setSelectedThread(thread);
+        const paneIndex = openThreadIds.indexOf(thread.id);
+        rememberOpenThread(thread, paneIndex >= 0 ? paneIndex : activePaneIndex);
         setLoadedThreadIds((current) => new Set([...current, thread.id]));
       }
 
       const currentActiveTurn = activeTurnFromThread(thread) || activeTurns[thread.id];
-      const shouldSteer = sendMode === "steer" || (sendMode === "auto" && currentActiveTurn);
-      if (shouldSteer) {
+      if (action === "steer") {
         if (!currentActiveTurn) {
           throw new Error("No active turn is available to steer");
         }
@@ -511,103 +723,77 @@ export default function App() {
     }
   }
 
-  async function interruptTurn() {
-    if (!selectedThread) {
-      return;
-    }
-    const turnId = activeTurnFromThread(selectedThread) || activeTurns[selectedThread.id];
+  async function interruptThread(thread: Thread) {
+    const turnId = activeTurnFromThread(thread) || activeTurns[thread.id];
     if (!turnId) {
       return;
     }
     try {
-      await rpc("turn/interrupt", { threadId: selectedThread.id, turnId });
-      scheduleThreadRefresh(selectedThread.id, 600);
+      await rpc("turn/interrupt", { threadId: thread.id, turnId });
+      scheduleThreadRefresh(thread.id, 600);
     } catch (error) {
       showToast(error);
     }
   }
 
-  async function renameSelectedThread() {
-    if (!selectedThread) {
-      return;
-    }
-    const name = window.prompt("Session name", titleForThread(selectedThread));
-    if (name === null) {
+  async function renameThread(thread: Thread, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === titleForThread(thread)) {
       return;
     }
     try {
-      await rpc("thread/name/set", { threadId: selectedThread.id, name });
-      await readThread(selectedThread.id);
+      await rpc("thread/name/set", { threadId: thread.id, name: trimmed });
+      setOpenThreads((current) => ({ ...current, [thread.id]: { ...thread, name: trimmed } }));
+      setSelectedThread((current) => (current?.id === thread.id ? { ...current, name: trimmed } : current));
+      setSessions((current) => current.map((item) => (item.id === thread.id ? { ...item, name: trimmed } : item)));
+      await readThread(thread.id);
       await loadSessions();
     } catch (error) {
       showToast(error);
     }
   }
 
-  async function forkSelectedThread() {
-    if (!selectedThread) {
-      return;
-    }
+  async function forkThread(thread: Thread, paneIndex = activePaneIndex) {
     try {
-      const result = await rpc<{ thread: Thread }>("thread/fork", { ...buildThreadLoadParams(selectedThread.id), ephemeral: false, threadSource: "user" });
-      setSelectedThreadId(result.thread.id);
-      setSelectedThread(result.thread);
+      const result = await rpc<{ thread: Thread }>("thread/fork", { ...buildThreadLoadParams(thread.id), ephemeral: false, threadSource: "user" });
+      rememberOpenThread(result.thread, paneIndex);
       setShowArchived(false);
-      await readSessionLog(result.thread.id).then(setLogs).catch(() => setLogs([]));
       await loadSessions();
     } catch (error) {
       showToast(error);
     }
   }
 
-  async function compactSelectedThread() {
-    if (!selectedThread || !window.confirm("Start context compaction for this session?")) {
+  async function compactThread(thread: Thread) {
+    if (!window.confirm("Start context compaction for this thread?")) {
       return;
     }
     try {
-      await rpc("thread/compact/start", { threadId: selectedThread.id });
+      await rpc("thread/compact/start", { threadId: thread.id });
       showToast("Compaction started");
     } catch (error) {
       showToast(error);
     }
   }
 
-  async function rollbackSelectedThread() {
-    if (!selectedThread) {
-      return;
-    }
-    const raw = window.prompt("Number of turns to drop", "1");
-    if (raw === null) {
-      return;
-    }
-    const numTurns = Number(raw);
-    if (!Number.isInteger(numTurns) || numTurns < 1) {
-      showToast("Enter a positive whole number");
-      return;
-    }
-    try {
-      const result = await rpc<{ thread: Thread }>("thread/rollback", { threadId: selectedThread.id, numTurns });
-      setSelectedThread(result.thread);
-      await readSessionLog(selectedThread.id).then(setLogs).catch(() => setLogs([]));
-      scheduleListRefresh(800);
-    } catch (error) {
-      showToast(error);
-    }
-  }
-
-  async function archiveSelectedThread() {
-    if (!selectedThread) {
-      return;
-    }
+  async function archiveThread(thread: Thread, paneIndex = activePaneIndex) {
     try {
       if (showArchived) {
-        const result = await rpc<{ thread: Thread }>("thread/unarchive", { threadId: selectedThread.id });
-        setSelectedThread(result.thread);
+        const result = await rpc<{ thread: Thread }>("thread/unarchive", { threadId: thread.id });
+        rememberOpenThread(result.thread, paneIndex);
         setShowArchived(false);
       } else {
-        await rpc("thread/archive", { threadId: selectedThread.id });
-        setSelectedThread(null);
-        setSelectedThreadId(null);
+        await rpc("thread/archive", { threadId: thread.id });
+        setOpenThreadIds((current) => current.map((id) => (id === thread.id ? null : id)));
+        setOpenThreads((current) => {
+          const next = { ...current };
+          delete next[thread.id];
+          return next;
+        });
+        if (selectedThreadId === thread.id) {
+          setSelectedThread(null);
+          setSelectedThreadId(null);
+        }
       }
       await loadSessions();
     } catch (error) {
@@ -617,6 +803,7 @@ export default function App() {
 
   async function createSession(input: { settings: UiSettings; prompt: string }) {
     try {
+      setSettings(input.settings);
       const params = compact({
         cwd: input.settings.cwd || null,
         model: input.settings.model || null,
@@ -625,8 +812,7 @@ export default function App() {
         threadSource: "user"
       });
       const result = await rpc<{ thread: Thread }>("thread/start", params);
-      setSelectedThreadId(result.thread.id);
-      setSelectedThread(result.thread);
+      rememberOpenThread(result.thread, activePaneIndex);
       setNewSessionOpen(false);
       setShowArchived(false);
       await loadSessions();
@@ -671,25 +857,12 @@ export default function App() {
     if (method === "thread/status/changed" && threadId) {
       const status = params.status;
       setSessions((current) => current.map((thread) => (thread.id === threadId ? { ...thread, status: status as Thread["status"] } : thread)));
+      setOpenThreads((current) => (current[threadId] ? { ...current, [threadId]: { ...current[threadId], status: status as Thread["status"] } } : current));
       setSelectedThread((current) => (current?.id === threadId ? { ...current, status: status as Thread["status"] } : current));
     }
-    if (threadId === selectedThreadIdRef.current && method.startsWith("item/")) {
+    if (threadId && openThreadIdsRef.current.includes(threadId) && method.startsWith("item/")) {
       scheduleThreadRefresh(threadId, 800);
     }
-  }
-
-  function rememberUiEvent(event: ServerEvent) {
-    if (!isUsefulUiEvent(event)) {
-      return;
-    }
-    eventsRef.current = trimEvents([...eventsRef.current, event]);
-    if (eventFlushTimerRef.current) {
-      return;
-    }
-    eventFlushTimerRef.current = window.setTimeout(() => {
-      eventFlushTimerRef.current = null;
-      setEvents(eventsRef.current);
-    }, 250);
   }
 
   function rememberActiveTurn(thread: Thread) {
@@ -699,14 +872,23 @@ export default function App() {
     }
   }
 
+  function rememberSessionPreview(thread: Thread) {
+    const preview = lastMessagePreview(thread);
+    if (!preview) {
+      return;
+    }
+    setSessionPreviews((current) => ({ ...current, [thread.id]: preview }));
+  }
+
   function scheduleThreadRefresh(threadId: string, delay: number) {
-    if (threadId !== selectedThreadIdRef.current) {
+    const paneIndex = openThreadIdsRef.current.indexOf(threadId);
+    if (paneIndex < 0) {
       return;
     }
     if (refreshTimerRef.current) {
       window.clearTimeout(refreshTimerRef.current);
     }
-    refreshTimerRef.current = window.setTimeout(() => readThread(threadId), delay);
+    refreshTimerRef.current = window.setTimeout(() => readThread(threadId, paneIndex), delay);
   }
 
   function scheduleListRefresh(delay: number) {
@@ -741,25 +923,320 @@ export default function App() {
     setToast(messageFromError(error));
     window.setTimeout(() => setToast(""), 4200);
   }
+
+  function switchMobilePane(direction: 1 | -1) {
+    setMobilePane((current) => {
+      const index = mobilePanes.indexOf(current);
+      const nextIndex = Math.min(mobilePanes.length - 1, Math.max(0, index + direction));
+      return mobilePanes[nextIndex] ?? current;
+    });
+  }
 }
 
-const TurnHistory = memo(function TurnHistory({ turns }: { turns: Turn[] }) {
-  const [showAll, setShowAll] = useState(false);
-  const visibleTurns = useMemo(() => (showAll ? turns : turns.slice(-DEFAULT_RENDERED_TURNS)), [showAll, turns]);
+const ThreadPane = memo(function ThreadPane({
+  activeTurnId,
+  allThreads,
+  archiveLabel,
+  isActive,
+  onActivate,
+  onArchive,
+  onCompact,
+  onFork,
+  onInterrupt,
+  onRename,
+  onSelectThread,
+  onSend,
+  paneCount,
+  thread
+}: {
+  activeTurnId: string | null;
+  allThreads: Thread[];
+  archiveLabel: string;
+  isActive: boolean;
+  onActivate: () => void;
+  onArchive: () => void;
+  onCompact: () => void;
+  onFork: () => void;
+  onInterrupt: () => void;
+  onRename: (name: string) => Promise<void>;
+  onSelectThread: (threadId: string) => void;
+  onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
+  paneCount: ThreadPaneCount;
+  thread: Thread | null;
+}) {
+  const [topHidden, setTopHidden] = useState(false);
+  const conversationRef = useRef<HTMLDivElement | null>(null);
+  const conversationScrollTopRef = useRef(0);
+  const lastThreadViewRef = useRef("");
+  const lastItemCountRef = useRef(0);
+  const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [thread?.turns]);
+
+  useEffect(() => {
+    if (!thread) {
+      lastThreadViewRef.current = "";
+      lastItemCountRef.current = 0;
+      setTopHidden(false);
+      return;
+    }
+    if (lastThreadViewRef.current !== thread.id) {
+      lastThreadViewRef.current = thread.id;
+      lastItemCountRef.current = itemCount;
+      setTopHidden(false);
+      scrollToEnd();
+      return;
+    }
+    if (itemCount > lastItemCountRef.current) {
+      scrollToEnd();
+    }
+    lastItemCountRef.current = itemCount;
+  }, [itemCount, thread]);
+
+  function handleConversationScroll(event: UIEvent<HTMLDivElement>) {
+    const nextTop = event.currentTarget.scrollTop;
+    const previousTop = conversationScrollTopRef.current;
+    conversationScrollTopRef.current = nextTop;
+    if (nextTop < 24) {
+      setTopHidden(false);
+      return;
+    }
+    if (nextTop > previousTop + 8) {
+      setTopHidden(true);
+    } else if (nextTop < previousTop - 8) {
+      setTopHidden(false);
+    }
+  }
+
+  function scrollToEnd() {
+    window.requestAnimationFrame(() => {
+      const element = conversationRef.current;
+      if (!element) {
+        return;
+      }
+      element.scrollTop = element.scrollHeight;
+      conversationScrollTopRef.current = element.scrollTop;
+    });
+  }
+
+  return (
+    <section className={`thread-panel ${topHidden ? "top-hidden" : ""} ${isActive ? "active" : ""}`} onPointerDown={onActivate}>
+      <header className="thread-header">
+        {paneCount > 1 && (
+          <select className="thread-select" value={thread?.id ?? ""} onChange={(event) => event.target.value && onSelectThread(event.target.value)}>
+            <option value="">Select thread</option>
+            {allThreads.map((item) => (
+              <option key={item.id} value={item.id}>{projectNameForThread(item)} - {titleForThread(item)}</option>
+            ))}
+          </select>
+        )}
+        {thread ? (
+          <div className="thread-title-block">
+            <StatusBadge value={statusType(thread)} />
+            <EditableThreadTitle thread={thread} onRename={onRename} />
+            <p>{thread.cwd || "cwd unavailable"} | {thread.id}</p>
+          </div>
+        ) : (
+          <div className="thread-title-block empty">
+            <h2>Select a thread</h2>
+            <p>Choose a thread from the list or selector.</p>
+          </div>
+        )}
+      </header>
+      {thread ? (
+        <>
+          <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
+            <TurnHistory threadId={thread.id} turns={thread.turns ?? []} scrollContainerRef={conversationRef} />
+          </div>
+          <Composer
+            activeTurnId={activeTurnId}
+            onInterrupt={onInterrupt}
+            onSend={onSend}
+            onFork={onFork}
+            onCompact={onCompact}
+            onArchive={onArchive}
+            archiveLabel={archiveLabel}
+          />
+        </>
+      ) : (
+        <div className="empty-state">
+          <h2>Select a thread</h2>
+          <p>Choose an existing thread or start a new one.</p>
+        </div>
+      )}
+    </section>
+  );
+});
+
+function ClerkLoginPanel({
+  error,
+  onAuthenticated,
+  onError
+}: {
+  error: string;
+  onAuthenticated: () => Promise<void>;
+  onError: (error: string) => void;
+}) {
+  if (!CLERK_PUBLISHABLE_KEY) {
+    return (
+      <div className="login-panel auth-error-panel">
+        <div>
+          <p className="eyebrow">Clerk auth</p>
+          <h1>Missing publishable key</h1>
+        </div>
+        <p className="error-text">Set VITE_CLERK_PUBLISHABLE_KEY for the client when Clerk auth is enabled on the server.</p>
+      </div>
+    );
+  }
+  return <ClerkLoginPanelInner error={error} onAuthenticated={onAuthenticated} onError={onError} />;
+}
+
+function ClerkLoginPanelInner({
+  error,
+  onAuthenticated,
+  onError
+}: {
+  error: string;
+  onAuthenticated: () => Promise<void>;
+  onError: (error: string) => void;
+}) {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const exchangeInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || exchangeInFlightRef.current) {
+      return;
+    }
+    exchangeInFlightRef.current = true;
+    onError("");
+    getToken()
+      .then((token) => {
+        if (!token) {
+          throw new Error("Clerk did not return a session token.");
+        }
+        return createClerkSession(token);
+      })
+      .then(onAuthenticated)
+      .catch((err) => {
+        exchangeInFlightRef.current = false;
+        onError(messageFromError(err));
+      });
+  }, [getToken, isLoaded, isSignedIn, onAuthenticated, onError]);
+
+  return (
+    <div className="login-panel">
+      <div>
+        <p className="eyebrow">Clerk OAuth</p>
+        <h1>Codex Web UI</h1>
+      </div>
+      <p className="muted">Sign in with Clerk. Access is allowed only for users with active Clerk metadata.</p>
+      <div className="clerk-login-actions">
+        <SignInButton mode="modal">
+          <button className="primary-button" type="button">Sign in</button>
+        </SignInButton>
+        <SignUpButton mode="modal">
+          <button className="secondary-button" type="button">Register</button>
+        </SignUpButton>
+        {isSignedIn && <UserButton />}
+      </div>
+      <p className="error-text">{error || (isSignedIn ? "Checking account access..." : "")}</p>
+    </div>
+  );
+}
+
+function LogoutButton({ authMode, onLogout }: { authMode: AuthState["mode"]; onLogout: () => Promise<void> }) {
+  if (authMode === "clerk" && CLERK_PUBLISHABLE_KEY) {
+    return <ClerkLogoutButton onLogout={onLogout} />;
+  }
+  return (
+    <button className="ghost-button" type="button" onClick={onLogout}>
+      <LogOut size={16} /> Logout
+    </button>
+  );
+}
+
+function ClerkLogoutButton({ onLogout }: { onLogout: () => Promise<void> }) {
+  const { signOut } = useClerk();
+  return (
+    <button
+      className="ghost-button"
+      type="button"
+      onClick={async () => {
+        await onLogout();
+        await signOut();
+      }}
+    >
+      <LogOut size={16} /> Logout
+    </button>
+  );
+}
+
+const TurnHistory = memo(function TurnHistory({
+  scrollContainerRef,
+  threadId,
+  turns
+}: {
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
+  threadId: string;
+  turns: Turn[];
+}) {
+  const [visibleCount, setVisibleCount] = useState(DEFAULT_RENDERED_TURNS);
+  const pendingScrollHeightRef = useRef<number | null>(null);
+  const visibleTurns = useMemo(() => turns.slice(-visibleCount), [turns, visibleCount]);
+  const hiddenCount = Math.max(0, turns.length - visibleTurns.length);
+
+  useEffect(() => {
+    setVisibleCount(DEFAULT_RENDERED_TURNS);
+    pendingScrollHeightRef.current = null;
+  }, [threadId]);
+
+  useEffect(() => {
+    const element = scrollContainerRef.current;
+    if (!element || hiddenCount === 0) {
+      return;
+    }
+    const handleScroll = () => {
+      if (element.scrollTop > 80 || pendingScrollHeightRef.current !== null) {
+        return;
+      }
+      pendingScrollHeightRef.current = element.scrollHeight;
+      setVisibleCount((current) => Math.min(turns.length, current + DEFAULT_RENDERED_TURNS));
+    };
+    element.addEventListener("scroll", handleScroll);
+    return () => element.removeEventListener("scroll", handleScroll);
+  }, [hiddenCount, scrollContainerRef, turns.length]);
+
+  useLayoutEffect(() => {
+    const previousHeight = pendingScrollHeightRef.current;
+    const element = scrollContainerRef.current;
+    if (previousHeight === null || !element) {
+      return;
+    }
+    element.scrollTop += element.scrollHeight - previousHeight;
+    pendingScrollHeightRef.current = null;
+  }, [scrollContainerRef, visibleCount]);
+
   if (turns.length === 0) {
     return (
       <div className="empty-state inline">
         <h2>No turns loaded</h2>
-        <p>Load the session or send a message.</p>
+        <p>Select a thread or send a message.</p>
       </div>
     );
   }
   return (
     <>
-      {!showAll && turns.length > DEFAULT_RENDERED_TURNS && (
+      {hiddenCount > 0 && (
         <div className="history-limit">
-          Showing latest {DEFAULT_RENDERED_TURNS} of {turns.length} turns.
-          <button type="button" onClick={() => setShowAll(true)}>Show full history</button>
+          Showing latest {visibleTurns.length} of {turns.length} turns.
+          <button
+            type="button"
+            onClick={() => {
+              const element = scrollContainerRef.current;
+              pendingScrollHeightRef.current = element?.scrollHeight ?? null;
+              setVisibleCount((current) => Math.min(turns.length, current + DEFAULT_RENDERED_TURNS));
+            }}
+          >
+            Load earlier
+          </button>
         </div>
       )}
       {visibleTurns.map((turn) => (
@@ -773,106 +1250,6 @@ const TurnHistory = memo(function TurnHistory({ turns }: { turns: Turn[] }) {
         </section>
       ))}
     </>
-  );
-});
-
-const FileLog = memo(function FileLog({ entries }: { entries: LogEntry[] }) {
-  const [showAll, setShowAll] = useState(false);
-  const visibleEntries = useMemo(() => (showAll ? entries : entries.slice(-DEFAULT_RENDERED_LOGS)), [showAll, entries]);
-  if (entries.length === 0) {
-    return (
-      <div className="empty-state inline">
-        <h2>No file log yet</h2>
-        <p>The backend creates per-session JSONL logs as events arrive.</p>
-      </div>
-    );
-  }
-  return (
-    <>
-      {!showAll && entries.length > DEFAULT_RENDERED_LOGS && (
-        <div className="history-limit">
-          Showing latest {DEFAULT_RENDERED_LOGS} of {entries.length} log entries.
-          <button type="button" onClick={() => setShowAll(true)}>Show full history</button>
-        </div>
-      )}
-      {visibleEntries.map((entry, index) => (
-        <LogEntryView entry={entry} key={`${entry.at}-${entry.method ?? entry.type}-${index}`} />
-      ))}
-    </>
-  );
-});
-
-const LogEntryView = memo(function LogEntryView({ entry }: { entry: LogEntry }) {
-  const payload = asRecord(entry.payload);
-  const params = asRecord(payload.params);
-  const result = asRecord(payload.result);
-  const method = entry.method ?? "";
-
-  if (entry.type === "stderr" || entry.type === "stdout") {
-    return (
-      <section className="log-entry">
-        <div className="log-heading"><StatusBadge value={entry.type} /><span>{formatIso(entry.at)}</span></div>
-        <pre className="code-block">{String(entry.payload ?? "")}</pre>
-      </section>
-    );
-  }
-
-  if (method === "turn/started" || method === "turn/completed") {
-    const turn = asRecord(params.turn);
-    return (
-      <section className="log-entry">
-        <div className="log-heading">
-          <StatusBadge value={method === "turn/started" ? "turn started" : String(turn.status ?? "turn completed")} />
-          <span>{String(turn.id ?? "")}</span>
-          <span>{formatIso(entry.at)}</span>
-        </div>
-      </section>
-    );
-  }
-
-  if ((method === "item/started" || method === "item/completed") && params.item) {
-    return (
-      <section className="log-entry">
-        <div className="log-heading">
-          <StatusBadge value={method === "item/started" ? "item started" : "item completed"} />
-          <span>{formatIso(entry.at)}</span>
-        </div>
-        <ThreadItemView item={params.item as ThreadItem} compact />
-      </section>
-    );
-  }
-
-  if ((method === "turn/start" || method === "turn/steer") && entry.type === "rpc-request") {
-    const requestParams = asRecord(payload.params);
-    return (
-      <section className="log-entry">
-        <div className="log-heading"><StatusBadge value={method} /><span>{formatIso(entry.at)}</span></div>
-        <MarkdownText text={userInputText(requestParams.input)} />
-      </section>
-    );
-  }
-
-  if (method === "thread/read" && result.thread) {
-    const thread = result.thread as Thread;
-    return (
-      <section className="log-entry">
-        <div className="log-heading"><StatusBadge value="thread snapshot" /><span>{titleForThread(thread)}</span><span>{formatIso(entry.at)}</span></div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="log-entry">
-      <div className="log-heading">
-        <StatusBadge value={entry.type} />
-        {method && <span>{method}</span>}
-        <span>{formatIso(entry.at)}</span>
-      </div>
-      <details>
-        <summary>JSON</summary>
-        <pre className="json-block">{JSON.stringify(entry.payload ?? entry, null, 2)}</pre>
-      </details>
-    </section>
   );
 });
 
@@ -976,21 +1353,29 @@ function SessionModal({
       >
         <header className="modal-header">
           <h2>{title}</h2>
-          <button className="icon-button" type="button" onClick={onClose}>x</button>
+          <button className="icon-button" type="button" onClick={onClose} title="Close">
+            <X size={16} />
+          </button>
         </header>
         <div className="form-grid">
-          <label className="field">
-            <span>Working directory</span>
-            <input value={draft.cwd} onChange={(event) => setDraft({ ...draft, cwd: event.target.value })} placeholder="/path/to/project" />
-          </label>
+          {includePrompt ? (
+            <DirectoryPicker value={draft.cwd} onChange={(cwd) => setDraft({ ...draft, cwd })} />
+          ) : (
+            <label className="field">
+              <span>Working directory</span>
+              <input value={draft.cwd} onChange={(event) => setDraft({ ...draft, cwd: event.target.value })} placeholder="/path/to/project" />
+            </label>
+          )}
           <label className="field">
             <span>Model</span>
-            <input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="configured default" />
+            <select value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
+              <option value="gpt-5.5">GPT-5.5</option>
+              <option value="gpt-5.4">GPT-5.4</option>
+            </select>
           </label>
           <label className="field">
             <span>Reasoning effort</span>
             <select value={draft.effort} onChange={(event) => setDraft({ ...draft, effort: event.target.value })}>
-              <option value="">default</option>
               <option value="minimal">minimal</option>
               <option value="low">low</option>
               <option value="medium">medium</option>
@@ -1001,7 +1386,6 @@ function SessionModal({
           <label className="field">
             <span>Approval policy</span>
             <select value={draft.approvalPolicy} onChange={(event) => setDraft({ ...draft, approvalPolicy: event.target.value })}>
-              <option value="">default</option>
               <option value="on-request">on-request</option>
               <option value="on-failure">on-failure</option>
               <option value="untrusted">untrusted</option>
@@ -1011,7 +1395,6 @@ function SessionModal({
           <label className="field">
             <span>Sandbox</span>
             <select value={draft.sandbox} onChange={(event) => setDraft({ ...draft, sandbox: event.target.value })}>
-              <option value="">default</option>
               <option value="workspace-write">workspace-write</option>
               <option value="read-only">read-only</option>
               <option value="danger-full-access">danger-full-access</option>
@@ -1026,10 +1409,147 @@ function SessionModal({
         )}
         <footer className="modal-actions">
           <button className="ghost-button" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-button" type="submit">Save</button>
+          <button className="primary-button" type="submit">{includePrompt ? "Start" : "Save"}</button>
         </footer>
       </form>
     </div>
+  );
+}
+
+function DirectoryPicker({ value, onChange }: { value: string; onChange: (cwd: string) => void }) {
+  const [browser, setBrowser] = useState<RepositoryBrowser | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [newRepoName, setNewRepoName] = useState("");
+
+  useEffect(() => {
+    void loadPath(value || undefined);
+  }, []);
+
+  async function loadPath(path?: string | null) {
+    setLoading(true);
+    setError("");
+    try {
+      setBrowser(await browseRepositories(path || undefined));
+    } catch (error) {
+      setError(messageFromError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateRepo() {
+    if (!browser || !newRepoName.trim()) {
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const next = await createRepository(browser.path, newRepoName.trim());
+      setBrowser(next);
+      setNewRepoName("");
+      onChange(next.path);
+    } catch (error) {
+      setError(messageFromError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="directory-picker">
+      <div className="field">
+        <span>Working directory</span>
+        <div className="path-pill">
+          <strong>{browser?.displayPath || value || "~"}</strong>
+          {browser?.isGitRepo && <StatusBadge value="git repo" />}
+        </div>
+      </div>
+      <div className="directory-toolbar">
+        <button className="ghost-button" type="button" onClick={() => loadPath(browser?.homePath)} disabled={loading}>
+          <Home size={16} /> Home
+        </button>
+        <button className="ghost-button" type="button" onClick={() => loadPath(browser?.parentPath)} disabled={loading || !browser?.parentPath}>
+          <ChevronUp size={16} /> Up
+        </button>
+        <button className="primary-button" type="button" onClick={() => browser && onChange(browser.path)} disabled={!browser?.isGitRepo}>
+          <FolderGit2 size={16} /> Select
+        </button>
+      </div>
+      <div className="directory-list">
+        {loading && <p className="muted empty-pad">Loading</p>}
+        {!loading && browser?.entries.map((entry) => (
+          <div className={`directory-row ${entry.isGitRepo ? "git-repo" : ""}`} key={entry.path}>
+            <button type="button" onClick={() => loadPath(entry.path)}>
+              {entry.isGitRepo ? <FolderGit2 size={17} /> : <Folder size={17} />}
+              <span>{entry.name}</span>
+            </button>
+            <button className="ghost-button" type="button" onClick={() => onChange(entry.path)} disabled={!entry.isGitRepo}>
+              Select
+            </button>
+          </div>
+        ))}
+        {!loading && browser?.entries.length === 0 && <p className="muted empty-pad">No folders</p>}
+      </div>
+      <div className="new-repo-form">
+        <label className="field">
+          <span>Create repository</span>
+          <input
+            value={newRepoName}
+            onChange={(event) => setNewRepoName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void handleCreateRepo();
+              }
+            }}
+            placeholder="folder-name"
+          />
+        </label>
+        <button className="secondary-button" type="button" onClick={handleCreateRepo} disabled={loading || !browser || !newRepoName.trim()}>
+          <Plus size={16} /> Create
+        </button>
+      </div>
+      {value && <p className="selected-path">Selected: {value}</p>}
+      {error && <p className="error-text">{error}</p>}
+    </section>
+  );
+}
+
+function EditableThreadTitle({ thread, onRename }: { thread: Thread; onRename: (name: string) => Promise<void> }) {
+  const [draft, setDraft] = useState(titleForThread(thread));
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    setDraft(titleForThread(thread));
+  }, [thread.id, thread.name, thread.preview]);
+
+  async function commit() {
+    setEditing(false);
+    await onRename(draft);
+  }
+
+  return (
+    <input
+      className="thread-title-input"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onFocus={() => setEditing(true)}
+      onBlur={() => void commit()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+        if (event.key === "Escape") {
+          setDraft(titleForThread(thread));
+          setEditing(false);
+          event.currentTarget.blur();
+        }
+      }}
+      aria-label="Thread title"
+      title={editing ? "Press Enter to save" : "Click to rename"}
+    />
   );
 }
 
@@ -1045,105 +1565,79 @@ function statusType(thread: Thread | null): string {
   return typeof thread.status === "string" ? thread.status : thread.status.type;
 }
 
-function statusFromLogged(value: JsonValue | null): Thread["status"] {
-  if (value && typeof value === "object" && !Array.isArray(value) && typeof value.type === "string") {
-    return { type: value.type };
-  }
-  return "notLoaded";
-}
-
 const Composer = memo(function Composer({
   activeTurnId,
-  mode,
+  archiveLabel,
+  onArchive,
+  onCompact,
+  onFork,
   onInterrupt,
-  onModeChange,
   onSend
 }: {
   activeTurnId: string | null;
-  mode: SendMode;
+  archiveLabel: string;
+  onArchive: () => void;
+  onCompact: () => void;
+  onFork: () => void;
   onInterrupt: () => void;
-  onModeChange: (mode: SendMode) => void;
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
+  async function submitDraft(action: ComposerAction) {
+    const sent = await onSend(draft, action);
+    if (sent) {
+      setDraft("");
+    }
+  }
+
+  if (collapsed) {
+    return (
+      <div className="composer collapsed">
+        <button className="primary-button" type="button" onClick={() => setCollapsed(false)}>
+          <Send size={16} /> Compose
+        </button>
+      </div>
+    );
+  }
+
   return (
     <form
       className="composer"
       onSubmit={async (event) => {
         event.preventDefault();
-        const sent = await onSend(draft);
-        if (sent) {
-          setDraft("");
-        }
+        await submitDraft("send");
       }}
     >
       <div className="composer-top">
-        <div className="segmented">
-          <button className={mode === "auto" ? "selected" : ""} type="button" onClick={() => onModeChange("auto")}>Auto</button>
-          <button className={mode === "new" ? "selected" : ""} type="button" onClick={() => onModeChange("new")}>New turn</button>
-          <button className={mode === "steer" ? "selected" : ""} type="button" onClick={() => onModeChange("steer")}>Steer</button>
-        </div>
-        <button className="danger-button" type="button" onClick={onInterrupt} disabled={!activeTurnId}>
-          <PauseCircle size={16} /> Interrupt
+        <button className="icon-button" type="button" onClick={() => setCollapsed(true)} title="Collapse composer" aria-label="Collapse composer">
+          <ChevronsDown size={17} />
+        </button>
+        <button className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} title="Interrupt" aria-label="Interrupt">
+          <PauseCircle size={17} />
+        </button>
+        <button className="icon-button" type="button" onClick={onFork} title="Fork thread" aria-label="Fork thread">
+          <GitFork size={17} />
+        </button>
+        <button className="icon-button" type="button" onClick={onCompact} title="Compact thread" aria-label="Compact thread">
+          <Minimize2 size={17} />
         </button>
       </div>
       <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} placeholder="Send a new message or steer the active turn" />
       <div className="composer-bottom">
-        <span>{composerHint(mode, activeTurnId)}</span>
-        <button className="primary-button" type="submit">
-          <Send size={16} /> Send
-        </button>
-      </div>
-    </form>
-  );
-});
-
-const EventsList = memo(function EventsList({ events }: { events: ServerEvent[] }) {
-  const visibleEvents = useMemo(() => events.slice(-140).reverse(), [events]);
-  return (
-    <div className="events-list">
-      {visibleEvents.map((event, index) => (
-        <div className="event-row" key={`${event.at}-${index}`}>
-          <strong>{eventTitle(event)}</strong>
-          <span>{eventMeta(event)}</span>
+        <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
+        <div className="composer-actions">
+          <button className={activeTurnId ? "queue-button" : "primary-button"} type="submit">
+            <Send size={16} /> {activeTurnId ? "Enqueue" : "Send"}
+          </button>
+          <button className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId}>
+            <Send size={16} /> Steer
+          </button>
+          <button className="ghost-button" type="button" onClick={onArchive}>
+            <Archive size={16} /> {archiveLabel}
+          </button>
         </div>
-      ))}
-    </div>
-  );
-});
-
-const RawRpcPanel = memo(function RawRpcPanel() {
-  const [rawMethod, setRawMethod] = useState("thread/list");
-  const [rawParams, setRawParams] = useState("{}");
-  const [rawResult, setRawResult] = useState("");
-  return (
-    <form
-      className="raw-rpc-form"
-      onSubmit={async (event) => {
-        event.preventDefault();
-        try {
-          const params = JSON.parse(rawParams || "{}") as JsonValue;
-          const result = await rpc(rawMethod, params);
-          setRawResult(JSON.stringify(result, null, 2));
-        } catch (error) {
-          setRawResult(messageFromError(error));
-        }
-      }}
-    >
-      <label className="field">
-        <span>Method</span>
-        <select value={rawMethod} onChange={(event) => setRawMethod(event.target.value)}>
-          {rpcMethods.map((method) => <option key={method} value={method}>{method}</option>)}
-        </select>
-      </label>
-      <label className="field">
-        <span>Params JSON</span>
-        <textarea value={rawParams} onChange={(event) => setRawParams(event.target.value)} rows={10} />
-      </label>
-      <button className="primary-button" type="submit">
-        <SquareTerminal size={16} /> Call
-      </button>
-      {rawResult && <pre className="json-block">{rawResult}</pre>}
+      </div>
     </form>
   );
 });
@@ -1160,19 +1654,73 @@ function titleForThread(thread: Thread): string {
   return thread.name || thread.preview || thread.id;
 }
 
+function projectNameForThread(thread: Thread): string {
+  if (thread.cwd) {
+    const parts = thread.cwd.split(/[\\/]+/).filter(Boolean);
+    return parts.at(-1) || thread.cwd;
+  }
+  return titleForThread(thread);
+}
+
+function mostRecentThreadsByFolder(threads: Thread[]): Thread[] {
+  const latest = new Map<string, Thread>();
+  for (const thread of threads) {
+    const key = thread.cwd || "unknown";
+    const current = latest.get(key);
+    if (!current || (thread.updatedAt ?? 0) > (current.updatedAt ?? 0)) {
+      latest.set(key, thread);
+    }
+  }
+  return [...latest.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+}
+
+function groupThreadsByFolder(threads: Thread[]): { key: string; label: string; threads: Thread[] }[] {
+  const groups = new Map<string, { key: string; label: string; threads: Thread[] }>();
+  for (const thread of threads) {
+    const key = thread.cwd || "unknown";
+    const label = thread.cwd ? projectNameForThread(thread) : "No folder";
+    const group = groups.get(key) ?? { key, label, threads: [] };
+    group.threads.push(thread);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function lastMessagePreview(thread: Thread): string {
+  const items = [...(thread.turns ?? [])].flatMap((turn) => turn.items ?? []);
+  const message = [...items].reverse().find((item) => item.type === "userMessage" || item.type === "agentMessage");
+  if (!message) {
+    return thread.preview || "";
+  }
+  if (message.type === "userMessage") {
+    return userInputText(message.content);
+  }
+  if (typeof message.text === "string") {
+    return message.text;
+  }
+  return thread.preview || "";
+}
+
+function isWithinHorizontalScroller(target: EventTarget | null, stopAt: Element): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  for (let element: Element | null = target; element && element !== stopAt; element = element.parentElement) {
+    if (canScrollHorizontally(element)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function canScrollHorizontally(element: Element): boolean {
+  const overflowX = window.getComputedStyle(element).overflowX;
+  return ["auto", "scroll", "overlay"].includes(overflowX) && element.scrollWidth > element.clientWidth + 1;
+}
+
 function activeTurnFromThread(thread: Thread): string | null {
   const active = [...(thread.turns ?? [])].reverse().find((turn) => turn.status === "inProgress");
   return active?.id ?? null;
-}
-
-function composerHint(mode: SendMode, activeTurnId: string | null): string {
-  if (mode === "steer") {
-    return activeTurnId ? `Steering active turn ${shortId(activeTurnId)}` : "Steer requires an active turn.";
-  }
-  if (mode === "new") {
-    return "Starts a new user turn on the selected session.";
-  }
-  return activeTurnId ? `Auto will steer ${shortId(activeTurnId)}.` : "Auto starts a new turn when the session is idle.";
 }
 
 function userInputText(value: unknown): string {
@@ -1210,6 +1758,7 @@ function labelForKind(kind: string): string {
     webSearch: "Search",
     imageView: "Image",
     imageGeneration: "Image",
+    logEntry: "Log",
     reasoning: "Reasoning",
     plan: "Plan"
   };
@@ -1243,53 +1792,10 @@ function threadIdFromThread(value: unknown): string {
   return typeof record.id === "string" ? record.id : "";
 }
 
-function eventTitle(event: ServerEvent): string {
-  const payload = asRecord(event.payload);
-  if (event.type === "notification") return String(payload.method ?? "notification");
-  if (event.type === "rpc-response") return `${String(payload.method ?? "rpc")} ${payload.ok ? "ok" : "failed"}`;
-  return event.type;
-}
-
-function eventMeta(event: ServerEvent): string {
-  const payload = asRecord(event.payload);
-  const params = asRecord(payload.params);
-  const line = typeof payload.line === "string" ? payload.line : "";
-  const threadId = typeof params.threadId === "string" ? shortId(params.threadId) : "";
-  return [formatClock(event.at), threadId, line].filter(Boolean).join(" | ");
-}
-
-function isUsefulUiEvent(event: ServerEvent): boolean {
-  if (event.type !== "notification") {
-    return true;
-  }
-  const method = String(asRecord(event.payload).method ?? "");
-  return ![
-    "item/agentMessage/delta",
-    "item/commandExecution/outputDelta",
-    "item/fileChange/outputDelta",
-    "item/reasoning/textDelta",
-    "item/reasoning/summaryTextDelta",
-    "thread/tokenUsage/updated",
-    "turn/diff/updated"
-  ].includes(method);
-}
-
-function trimEvents(events: ServerEvent[]): ServerEvent[] {
-  return events.slice(-500);
-}
-
 function formatDate(seconds: number | null | undefined): string {
   if (!seconds) return "";
   const ms = seconds > 10_000_000_000 ? seconds : seconds * 1000;
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
-}
-
-function formatIso(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
-}
-
-function formatClock(ms: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(ms));
 }
 
 function shortId(id: string): string {
@@ -1302,14 +1808,6 @@ function truncate(value: string, limit: number): string {
 
 function exitText(value: unknown): string {
   return typeof value === "number" ? `exit ${value}` : "";
-}
-
-function loadSettings(): UiSettings {
-  try {
-    return { ...defaultSettings, ...JSON.parse(localStorage.getItem("codex-web-ui-settings") || "{}") };
-  } catch {
-    return { ...defaultSettings };
-  }
 }
 
 function messageFromError(error: unknown): string {
