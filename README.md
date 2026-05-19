@@ -12,7 +12,41 @@ npm run build
 npm start
 ```
 
-Open `http://127.0.0.1:4545`. The hardcoded fallback password is `codex`.
+Open `http://127.0.0.1:4545`.
+
+The server is always protected by either Clerk or password auth. Set a strong
+`CODEX_WEB_UI_PASSWORD` before starting the backend unless Clerk is configured;
+with neither configured, the password login remains locked and API routes stay
+unauthorized.
+
+For development, run the backend, Vite, and a sibling Codex app-server process:
+
+```bash
+CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev
+```
+
+In dev mode, the backend connects to Codex through `codex app-server proxy`
+using `CODEX_APP_SERVER_SOCKET` instead of owning the app-server directly. That
+lets backend watch restarts reconnect without terminating active Codex work.
+
+For an ngrok-facing local watch mode without Vite, rebuild the frontend on
+change and restart the backend on server changes:
+
+```bash
+CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 PORT=4545 npm run watch
+```
+
+This serves the rebuilt frontend from `dist/public`, keeps a sibling
+`codex app-server` process running, and reconnects the backend through the
+socket proxy after backend restarts.
+
+You can also run the pieces manually:
+
+```bash
+CODEX_APP_SERVER_SOCKET=./tmp/codex-app-server.sock npm run codex:app-server
+CODEX_APP_SERVER_SOCKET=./tmp/codex-app-server.sock CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev:api
+npm run dev:client
+```
 
 To expose the running server through ngrok:
 
@@ -28,6 +62,7 @@ Useful environment variables:
 CODEX_WEB_UI_PASSWORD='change-me' PORT=4545 HOST=0.0.0.0 npm start
 CODEX_COMMAND=codex CODEX_CWD=/path/to/project npm start
 CODEX_MODEL=gpt-5.5 CODEX_REASONING_EFFORT=high npm start
+CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
 CODEX_WEB_UI_DATA_DIR=/path/to/logs npm start
 ```
 
@@ -36,12 +71,14 @@ The backend loads `.env` from the project root before reading these variables. S
 ## Features
 
 - Lists active, archived, and previously logged Codex sessions.
-- Starts, loads, renames, forks, archives, unarchives, compacts, and rolls back sessions.
+- Starts, loads, renames, forks, archives, unarchives, and compacts sessions.
 - Starts new turns, steers active turns, and interrupts active turns.
 - Streams app-server notifications and stderr via SSE.
-- Writes backend JSONL logs to `data/server.jsonl` and `data/sessions/<thread-id>.jsonl`.
+- Writes backend JSONL logs to `data/server.jsonl` and `data/sessions/<thread-id>.jsonl`; RPC request/response logs keep summary metadata instead of full payloads.
 - Shows file-backed session history in the frontend.
-- Renders turns, reasoning, user/agent markdown, commands, command output, file changes, and tool calls.
-- Includes a raw JSON-RPC panel for app-server methods that do not have first-class controls yet.
+- Renders turns, reasoning, user/agent markdown, commands, command output, file changes, diffs, file references, and tool calls.
+- Uploads file attachments and inserts uploaded paths into the composer.
+- Previews referenced text, code, Markdown, JSON, images, PDFs, and browser-playable video files.
+- Shows app-server status and account rate-limit usage.
 
-The password gate is intentionally simple and server-side. For real internet exposure, put this behind HTTPS and set a strong `CODEX_WEB_UI_PASSWORD`.
+The password gate is intentionally simple and server-side. For real internet exposure, put this behind HTTPS and set a strong `CODEX_WEB_UI_PASSWORD` or Clerk credentials.

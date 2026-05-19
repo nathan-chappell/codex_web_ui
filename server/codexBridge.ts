@@ -17,6 +17,7 @@ export interface CodexBridgeConfig {
   model: string;
   reasoningEffort: string;
   fastMode: boolean;
+  appServerSocketPath: string;
 }
 
 export class CodexBridge {
@@ -139,11 +140,9 @@ export class CodexBridge {
       error: null
     });
 
-    const proc = spawn(this.config.command, ["app-server", ...this.configArgs(), "--listen", "stdio://"], {
-      cwd: this.config.cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"]
-    });
+    const proc = this.config.appServerSocketPath
+      ? this.spawnProxy()
+      : this.spawnOwnedAppServer();
     this.proc = proc;
     this.setStatus({ state: "starting", pid: proc.pid ?? null });
 
@@ -158,7 +157,7 @@ export class CodexBridge {
         exitedAt: new Date().toISOString(),
         exitCode: code,
         signal,
-        error: code === 0 ? null : `codex app-server exited with code ${code ?? "unknown"}`
+        error: code === 0 ? null : `${this.config.appServerSocketPath ? "codex app-server proxy" : "codex app-server"} exited with code ${code ?? "unknown"}`
       });
       this.proc = null;
       this.rejectPending(new Error(this.status.error ?? "codex app-server exited"));
@@ -177,6 +176,22 @@ export class CodexBridge {
     );
     this.notify("initialized");
     this.setStatus({ state: "running" });
+  }
+
+  private spawnOwnedAppServer(): ChildProcessWithoutNullStreams {
+    return spawn(this.config.command, ["app-server", ...this.configArgs(), "--listen", "stdio://"], {
+      cwd: this.config.cwd,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+  }
+
+  private spawnProxy(): ChildProcessWithoutNullStreams {
+    return spawn(this.config.command, ["app-server", "proxy", "--sock", this.config.appServerSocketPath], {
+      cwd: this.config.cwd,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
   }
 
   private configArgs(): string[] {

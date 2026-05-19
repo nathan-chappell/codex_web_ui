@@ -1,6 +1,6 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-export type AuthMode = "open" | "password" | "clerk";
+export type AuthMode = "password" | "clerk";
 
 export interface AuthUser {
   id: string;

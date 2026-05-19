@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "watch": "node scripts/watch.mjs",
+    "codex:app-server": "node scripts/codex-app-server.mjs",
     "dev:api": "tsx watch server/index.ts",
     "dev:client": "vite --host 0.0.0.0",
     "build": "npm run build:client && npm run build:server",

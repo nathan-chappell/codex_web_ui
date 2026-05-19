@@ -35,7 +35,12 @@ export class SessionLogStore {
   }
 
   async recordRpcRequest(method: string, id: string | number, params: JsonValue | undefined): Promise<void> {
-    await this.append({ type: "rpc-request", id, method, payload: jsonOrNull({ params }) });
+    await this.append({
+      type: "rpc-request",
+      id,
+      method,
+      payload: jsonOrNull({ threadIds: threadIdsFromJson(params), params: summarizeRpcPayload(params) })
+    });
   }
 
   async recordRpcResponse(
@@ -47,7 +52,12 @@ export class SessionLogStore {
     if (result !== undefined) {
       await this.recordThreadsFromResult(result);
     }
-    await this.append({ type: "rpc-response", id, method, payload: jsonOrNull({ result, error }) });
+    await this.append({
+      type: "rpc-response",
+      id,
+      method,
+      payload: jsonOrNull({ threadIds: threadIdsFromJson(result), result: summarizeRpcPayload(result), error })
+    });
   }
 
   async recordNotification(method: string, params: JsonValue | undefined): Promise<void> {
@@ -159,10 +169,114 @@ function extractThreadIds(entry: LogEntry): string[] {
   }
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
     const record = payload as Record<string, JsonValue>;
+    if (Array.isArray(record.threadIds)) {
+      for (const id of record.threadIds) {
+        if (typeof id === "string") {
+          ids.add(id);
+        }
+      }
+    }
     collectThreadIds(record.params, ids);
     collectThreadIds(record.result, ids);
   }
   return [...ids];
+}
+
+function threadIdsFromJson(value: JsonValue | undefined): string[] {
+  const ids = new Set<string>();
+  collectThreadIdsDeep(value, ids, 0);
+  return [...ids];
+}
+
+function collectThreadIdsDeep(value: JsonValue | undefined, ids: Set<string>, depth: number): void {
+  if (!value || typeof value !== "object" || depth > 8) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectThreadIdsDeep(item, ids, depth + 1);
+    }
+    return;
+  }
+  const record = value as Record<string, JsonValue>;
+  if (typeof record.threadId === "string") {
+    ids.add(record.threadId);
+  }
+  if (isThreadRecord(record.thread)) {
+    ids.add(record.thread.id);
+  }
+  for (const nested of Object.values(record)) {
+    collectThreadIdsDeep(nested, ids, depth + 1);
+  }
+}
+
+function summarizeRpcPayload(value: JsonValue | undefined): JsonValue {
+  if (value === undefined) {
+    return null;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return {
+      type: "array",
+      length: value.length,
+      sample: summarizeArraySample(value)
+    };
+  }
+  const record = value as Record<string, JsonValue>;
+  if (isThreadRecord(record.thread)) {
+    return {
+      type: "object",
+      keys: Object.keys(record),
+      thread: summarizeThreadRecord(record.thread)
+    };
+  }
+  if (Array.isArray(record.data)) {
+    return {
+      type: "object",
+      keys: Object.keys(record),
+      data: {
+        type: "array",
+        length: record.data.length,
+        sample: summarizeArraySample(record.data)
+      }
+    };
+  }
+  return {
+    type: "object",
+    keys: Object.keys(record).slice(0, 30),
+    threadId: typeof record.threadId === "string" ? record.threadId : null
+  };
+}
+
+function summarizeArraySample(items: JsonValue[]): JsonValue[] {
+  return items.slice(0, 5).map((item) => {
+    if (isThreadRecord(item)) {
+      return summarizeThreadRecord(item);
+    }
+    if (!item || typeof item !== "object") {
+      return item;
+    }
+    if (Array.isArray(item)) {
+      return { type: "array", length: item.length };
+    }
+    return { type: "object", keys: Object.keys(item).slice(0, 20) };
+  });
+}
+
+function summarizeThreadRecord(thread: ThreadRecord): JsonValue {
+  return {
+    id: thread.id,
+    name: typeof thread.name === "string" ? thread.name : null,
+    preview: typeof thread.preview === "string" ? thread.preview : "",
+    cwd: typeof thread.cwd === "string" ? thread.cwd : "",
+    sessionId: typeof thread.sessionId === "string" ? thread.sessionId : "",
+    createdAt: typeof thread.createdAt === "number" ? thread.createdAt : null,
+    updatedAt: typeof thread.updatedAt === "number" ? thread.updatedAt : null,
+    status: thread.status ?? null,
+    turnCount: Array.isArray(thread.turns) ? thread.turns.length : null
+  };
 }
 
 function collectThreadIds(value: JsonValue | undefined, ids: Set<string>): void {

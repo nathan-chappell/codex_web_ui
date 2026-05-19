@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 
+const appServerSocket = process.env.CODEX_APP_SERVER_SOCKET || path.join(process.cwd(), "tmp", "codex-app-server.sock");
 const services = [
-  { name: "api", args: ["run", "dev:api"], restartDelayMs: 1000 },
+  { name: "app-server", args: ["run", "codex:app-server"], restartDelayMs: 2500, env: { CODEX_APP_SERVER_SOCKET: appServerSocket } },
+  { name: "api", args: ["run", "dev:api"], restartDelayMs: 1000, env: { CODEX_APP_SERVER_SOCKET: appServerSocket } },
   { name: "client", args: ["run", "dev:client"], restartDelayMs: 1000 }
 ];
 
@@ -14,7 +17,10 @@ for (const service of services) {
 }
 
 function startService(service) {
-  const child = spawn("npm", service.args, { stdio: "inherit" });
+  const child = spawn("npm", service.args, {
+    stdio: "inherit",
+    env: { ...process.env, ...service.env }
+  });
   children.set(service.name, child);
 
   child.on("exit", (code, signal) => {

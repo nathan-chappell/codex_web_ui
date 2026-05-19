@@ -26,7 +26,10 @@ const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || "";
 const CLERK_PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY || "";
 const CLERK_JWT_KEY = process.env.CLERK_JWT_KEY || "";
 const CLERK_AUTHORIZED_PARTIES = parseCsvEnv(process.env.CLERK_AUTHORIZED_PARTIES);
-const AUTH_MODE: AuthMode = CLERK_SECRET_KEY && CLERK_PUBLISHABLE_KEY ? "clerk" : PASSWORD ? "password" : "open";
+const AUTH_MODE: AuthMode = CLERK_SECRET_KEY && CLERK_PUBLISHABLE_KEY ? "clerk" : "password";
+const AUTH_WARNING = AUTH_MODE === "password" && !PASSWORD
+  ? "Set CODEX_WEB_UI_PASSWORD or Clerk credentials before exposing this server."
+  : null;
 const clerkClient = AUTH_MODE === "clerk"
   ? createClerkClient({ secretKey: CLERK_SECRET_KEY, publishableKey: CLERK_PUBLISHABLE_KEY })
   : null;
@@ -39,13 +42,14 @@ const bridge = new CodexBridge(
     cwd: process.env.CODEX_CWD || projectRoot,
     model: process.env.CODEX_MODEL || "gpt-5.5",
     reasoningEffort: process.env.CODEX_REASONING_EFFORT || "high",
-    fastMode: process.env.CODEX_FAST_MODE !== "0"
+    fastMode: process.env.CODEX_FAST_MODE !== "0",
+    appServerSocketPath: process.env.CODEX_APP_SERVER_SOCKET || ""
   },
   hub,
   logs
 );
 
-type AuthMode = "open" | "password" | "clerk";
+type AuthMode = "password" | "clerk";
 type AuthUser = { id: string; email: string | null; name: string | null; role: string };
 type AppSession = { createdAt: number; mode: AuthMode; user: AuthUser | null };
 
@@ -217,7 +221,10 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`codex-web-ui listening on http://${HOST}:${PORT}`);
-  console.log(`auth mode: ${AUTH_MODE}${AUTH_MODE === "open" ? " (no password or Clerk configured)" : ""}`);
+  console.log(`auth mode: ${AUTH_MODE}`);
+  if (AUTH_WARNING) {
+    console.warn(AUTH_WARNING);
+  }
 });
 
 process.on("SIGINT", shutdown);
@@ -270,9 +277,6 @@ async function shutdown(): Promise<void> {
 }
 
 function isAuthenticated(req: IncomingMessage): boolean {
-  if (AUTH_MODE === "open") {
-    return true;
-  }
   return Boolean(currentSession(req));
 }
 
@@ -297,19 +301,11 @@ function currentSession(req: IncomingMessage): AppSession | null {
 }
 
 function authState(req: IncomingMessage): { authenticated: boolean; mode: AuthMode; warning: string | null; user: AuthUser | null } {
-  if (AUTH_MODE === "open") {
-    return {
-      authenticated: true,
-      mode: "open",
-      warning: "No auth configured: anyone who can reach this server has full access.",
-      user: null
-    };
-  }
   const session = currentSession(req);
   return {
     authenticated: Boolean(session),
     mode: AUTH_MODE,
-    warning: null,
+    warning: AUTH_WARNING,
     user: session?.user ?? null
   };
 }

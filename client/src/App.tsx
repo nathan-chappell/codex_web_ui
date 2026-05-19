@@ -96,7 +96,7 @@ export default function App() {
   const [loadingThreadByPane, setLoadingThreadByPane] = useState<Record<number, string>>({});
 
   const eventSourceRef = useRef<EventSource | null>(null);
-  const refreshTimerRef = useRef<number | null>(null);
+  const refreshTimersRef = useRef<Map<string, number>>(new Map());
   const listTimerRef = useRef<number | null>(null);
   const sessionsLoadSeqRef = useRef(0);
   const threadLoadSeqRef = useRef(0);
@@ -111,6 +111,13 @@ export default function App() {
 
   useEffect(() => {
     return () => {
+      for (const timer of refreshTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      refreshTimersRef.current.clear();
+      if (listTimerRef.current) {
+        window.clearTimeout(listTimerRef.current);
+      }
       clearSessionLongPress();
       clearSessionClickTimer();
     };
@@ -1032,15 +1039,18 @@ export default function App() {
     if (paneIndex < 0) {
       return;
     }
-    if (refreshTimerRef.current) {
-      window.clearTimeout(refreshTimerRef.current);
+    const existingTimer = refreshTimersRef.current.get(threadId);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
     }
-    refreshTimerRef.current = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
+      refreshTimersRef.current.delete(threadId);
       const currentPaneIndex = openThreadIdsRef.current.indexOf(threadId);
       if (currentPaneIndex >= 0) {
         void readThread(threadId, currentPaneIndex);
       }
     }, delay);
+    refreshTimersRef.current.set(threadId, timer);
   }
 
   function isThreadLoadCurrent(paneIndex: number, loadToken?: number): boolean {
