@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync, watch } from "node:fs";
 import path from "node:path";
 
 const projectRoot = process.cwd();
-const appServerSocket = process.env.CODEX_APP_SERVER_SOCKET || path.join(projectRoot, "tmp", "codex-app-server.sock");
+const appServerSocket = process.env.CODEX_APP_SERVER_SOCKET || "";
 const ignoredDirs = new Set([".git", ".agents", ".codex", "data", "dist", "node_modules", "tmp"]);
 const watchers = [];
 const restartTimers = new Set();
@@ -17,7 +17,9 @@ let restartingBackend = false;
 await run("client build", ["run", "build:client"]);
 await run("server build", ["run", "build:server"]);
 
-startAppServer();
+if (appServerSocket) {
+  startAppServer();
+}
 startBackend();
 watchTree(path.join(projectRoot, "client"), () => scheduleTask("client", rebuildClient));
 watchTree(path.join(projectRoot, "server"), () => scheduleTask("server", rebuildServerAndRestartBackend));
@@ -30,6 +32,9 @@ watchFile(path.join(projectRoot, "package.json"), () => {
 
 console.log("[watch] serving rebuilt frontend from dist/public");
 console.log("[watch] backend restarts on server changes");
+console.log(appServerSocket
+  ? `[watch] backend connects through codex app-server socket ${appServerSocket}`
+  : "[watch] backend owns a stdio codex app-server process");
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
