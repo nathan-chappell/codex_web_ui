@@ -30,6 +30,58 @@ export interface Thread {
   [key: string]: unknown;
 }
 
+export interface TokenUsageBreakdown {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+}
+
+export interface ThreadTokenUsage {
+  total: TokenUsageBreakdown;
+  last: TokenUsageBreakdown;
+  modelContextWindow: number | null;
+}
+
+export interface RateLimitWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface RateLimitSnapshot {
+  limitId: string | null;
+  limitName: string | null;
+  primary: RateLimitWindow | null;
+  secondary: RateLimitWindow | null;
+}
+
+export interface UploadedAttachment {
+  path: string;
+  displayPath: string;
+  name: string;
+  size: number;
+}
+
+export interface FileReference {
+  path: string;
+  cwd?: string | null;
+  label?: string;
+}
+
+export interface FilePreview {
+  path: string;
+  displayPath: string;
+  name: string;
+  extension: string;
+  mimeType?: string;
+  size: number;
+  kind: "json" | "markdown" | "code" | "text" | "image" | "pdf" | "video" | "download" | string;
+  previewable: boolean;
+  content?: string;
+}
+
 export interface Turn {
   id: string;
   status: "completed" | "interrupted" | "failed" | "inProgress" | string;

@@ -9,6 +9,7 @@ import {
   LogOut,
   MessageSquarePlus,
   Minimize2,
+  Paperclip,
   PauseCircle,
   Plus,
   RefreshCw,
@@ -18,9 +19,11 @@ import {
 } from "lucide-react";
 import { SignInButton, SignUpButton, UserButton, useAuth, useClerk } from "@clerk/react";
 import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, RefObject } from "react";
+import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
   browseRepositories,
   createClerkSession,
@@ -31,10 +34,14 @@ import {
   login,
   logout,
   openEventStream,
+  readReferencedFile,
+  referencedFileDownloadUrl,
+  referencedFileRawUrl,
   restartServer,
-  rpc
+  rpc,
+  uploadAttachment
 } from "./api";
-import type { AuthState, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
+import type { AuthState, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
 import { CLERK_PUBLISHABLE_KEY } from "./authConfig";
 
 const defaultSettings: UiSettings = {
@@ -49,7 +56,7 @@ type ComposerAction = "send" | "steer";
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2 | 4;
 
-const DEFAULT_RENDERED_TURNS = 40;
+const THREAD_ITEM_BATCH_SIZE = 20;
 const SESSION_PAGE_SIZE = 50;
 const mobilePanes: MobilePane[] = ["sessions", "thread"];
 
@@ -80,11 +87,20 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [settings, setSettings] = useState<UiSettings>({ ...defaultSettings });
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [activeTurns, setActiveTurns] = useState<Record<string, string>>({});
+  const [rateLimits, setRateLimits] = useState<RateLimitSnapshot | null>(null);
+  const [filePreviewCache, setFilePreviewCache] = useState<Record<string, FilePreview>>({});
+  const [fileViewer, setFileViewer] = useState<{ reference: FileReference; file: FilePreview } | null>(null);
+  const [loadingThreadByPane, setLoadingThreadByPane] = useState<Record<number, string>>({});
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const listTimerRef = useRef<number | null>(null);
+  const sessionsLoadSeqRef = useRef(0);
+  const threadLoadSeqRef = useRef(0);
+  const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
+  const activePaneIndexRef = useRef(0);
   const openThreadIdsRef = useRef<(string | null)[]>([null]);
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean } | null>(null);
   const resizingSidebarRef = useRef(false);
@@ -111,6 +127,7 @@ export default function App() {
     }
     getStatus().then(setServerStatus).catch(showToast);
     loadSessions();
+    loadRateLimits();
     eventSourceRef.current?.close();
     const source = openEventStream(
       (event) => {
@@ -142,15 +159,22 @@ export default function App() {
     [openThreadIds, threadPaneCount]
   );
   const selectionActive = selectedSessionIds.size > 0;
-
   useEffect(() => {
-    setOpenThreadIds((current) => Array.from({ length: threadPaneCount }, (_, index) => current[index] ?? null));
-    setActivePaneIndex((current) => Math.min(current, threadPaneCount - 1));
+    const nextOpenThreadIds = Array.from({ length: threadPaneCount }, (_, index) => openThreadIdsRef.current[index] ?? null);
+    openThreadIdsRef.current = nextOpenThreadIds;
+    setOpenThreadIds(nextOpenThreadIds);
+    const nextActivePaneIndex = Math.min(activePaneIndexRef.current, threadPaneCount - 1);
+    activePaneIndexRef.current = nextActivePaneIndex;
+    setActivePaneIndex(nextActivePaneIndex);
   }, [threadPaneCount]);
 
   useEffect(() => {
     openThreadIdsRef.current = openThreadIds;
   }, [openThreadIds]);
+
+  useEffect(() => {
+    activePaneIndexRef.current = activePaneIndex;
+  }, [activePaneIndex]);
 
   if (authenticated === null) {
     return <div className="boot">Loading</div>;
@@ -199,7 +223,9 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          <StatusBadge value={serverStatus.state} />
+          <button className="status-button" type="button" onClick={() => setStatusOpen(true)} title="Show app server status">
+            <UsageStatusSummary rateLimits={rateLimits} compact />
+          </button>
           <button className="ghost-button" type="button" onClick={handleRestart}>
             <RefreshCw size={16} /> Reconnect
           </button>
@@ -378,22 +404,27 @@ export default function App() {
           <div className="thread-grid">
             {paneThreadIds.map((threadId, paneIndex) => {
               const thread = threadId ? openThreads[threadId] ?? null : null;
+              const isLoadingThread = Boolean(threadId && loadingThreadByPane[paneIndex] === threadId && !thread);
               return (
                 <ThreadPane
                   activeTurnId={thread ? activeTurnFromThread(thread) || activeTurns[thread.id] || null : null}
                   allThreads={mergedSessions}
                   archiveLabel={showArchived ? "Unarchive" : "Archive"}
                   isActive={paneIndex === activePaneIndex}
+                  isLoading={isLoadingThread}
                   key={paneIndex}
-                  onActivate={() => setActivePaneIndex(paneIndex)}
+                  onActivate={() => activatePane(paneIndex)}
                   onArchive={() => thread && archiveThread(thread, paneIndex)}
                   onCompact={() => thread && compactThread(thread)}
                   onFork={() => thread && forkThread(thread, paneIndex)}
                   onInterrupt={() => thread && interruptThread(thread)}
                   onRename={(name) => (thread ? renameThread(thread, name) : Promise.resolve())}
+                  onError={showToast}
+                  onOpenFile={openFileReference}
                   onSelectThread={(nextThreadId) => selectThread(nextThreadId, paneIndex)}
-                  onSend={(text, action) => (thread ? sendMessageText(thread, text, action) : Promise.resolve(false))}
+                  onSend={(text, action) => (thread ? sendMessageText(thread, paneIndex, text, action) : Promise.resolve(false))}
                   paneCount={threadPaneCount}
+                  rateLimits={rateLimits}
                   thread={thread}
                 />
               );
@@ -410,6 +441,21 @@ export default function App() {
           onClose={() => setNewSessionOpen(false)}
           onSubmit={createSession}
           includePrompt
+        />
+      )}
+      {statusOpen && (
+        <StatusModal
+          rateLimits={rateLimits}
+          status={serverStatus}
+          onClose={() => setStatusOpen(false)}
+          onRefresh={refreshStatus}
+        />
+      )}
+      {fileViewer && (
+        <FileViewerModal
+          file={fileViewer.file}
+          reference={fileViewer.reference}
+          onClose={() => setFileViewer(null)}
         />
       )}
       {toast && <div className="toast">{toast}</div>}
@@ -449,7 +495,35 @@ export default function App() {
     }
   }
 
+  async function refreshStatus() {
+    try {
+      setServerStatus(await getStatus());
+      await loadRateLimits();
+    } catch (error) {
+      showToast(error);
+    }
+  }
+
+  async function openFileReference(reference: FileReference) {
+    const key = fileReferenceKey(reference);
+    try {
+      const cached = filePreviewCache[key];
+      const file = cached ?? await readReferencedFile(reference);
+      if (!cached) {
+        setFilePreviewCache((current) => ({ ...current, [key]: file }));
+      }
+      if (!file.previewable) {
+        window.location.assign(referencedFileDownloadUrl(reference));
+        return;
+      }
+      setFileViewer({ reference, file });
+    } catch (error) {
+      showToast(error);
+    }
+  }
+
   async function loadSessions(page = sessionPage) {
+    const loadId = ++sessionsLoadSeqRef.current;
     setSessionsLoading(true);
     try {
       const limit = page * SESSION_PAGE_SIZE;
@@ -466,6 +540,9 @@ export default function App() {
         rpc<{ data: Thread[] }>("thread/list", params),
         rpc<{ data: string[] }>("thread/loaded/list", { limit: 500 })
       ]);
+      if (loadId !== sessionsLoadSeqRef.current) {
+        return;
+      }
       if (threadResult.status === "fulfilled") {
         const nextSessions = threadResult.value.data ?? [];
         setSessions(nextSessions);
@@ -487,9 +564,25 @@ export default function App() {
         throw threadResult.reason;
       }
     } catch (error) {
-      showToast(error);
+      if (loadId === sessionsLoadSeqRef.current) {
+        showToast(error);
+      }
     } finally {
-      setSessionsLoading(false);
+      if (loadId === sessionsLoadSeqRef.current) {
+        setSessionsLoading(false);
+      }
+    }
+  }
+
+  async function loadRateLimits() {
+    try {
+      const result = await rpc("account/rateLimits/read");
+      const parsed = parseRateLimitsResponse(result);
+      if (parsed) {
+        setRateLimits(parsed);
+      }
+    } catch {
+      setRateLimits(null);
     }
   }
 
@@ -536,7 +629,7 @@ export default function App() {
     clearSessionClickTimer();
     sessionClickTimerRef.current = window.setTimeout(() => {
       sessionClickTimerRef.current = null;
-      selectThread(threadId, activePaneIndex);
+      selectThread(threadId, activePaneIndexRef.current);
     }, 220);
   }
 
@@ -620,15 +713,26 @@ export default function App() {
     }
   }
 
-  function rememberOpenThread(thread: Thread, paneIndex = activePaneIndex) {
+  function activatePane(paneIndex: number) {
+    activePaneIndexRef.current = paneIndex;
+    setActivePaneIndex(paneIndex);
+  }
+
+  function setPaneThreadId(paneIndex: number, threadId: string | null) {
+    const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
+    const next = Array.from({ length: threadPaneCount }, (_, index) => openThreadIdsRef.current[index] ?? null);
+    next[targetPaneIndex] = threadId;
+    openThreadIdsRef.current = next;
+    setOpenThreadIds(next);
+  }
+
+  function rememberOpenThread(thread: Thread, paneIndex = activePaneIndexRef.current, assignPane = true) {
     const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
     setOpenThreads((current) => ({ ...current, [thread.id]: thread }));
-    setOpenThreadIds((current) => {
-      const next = Array.from({ length: threadPaneCount }, (_, index) => current[index] ?? null);
-      next[targetPaneIndex] = thread.id;
-      return next;
-    });
-    if (targetPaneIndex === activePaneIndex) {
+    if (assignPane) {
+      setPaneThreadId(targetPaneIndex, thread.id);
+    }
+    if (targetPaneIndex === activePaneIndexRef.current && openThreadIdsRef.current[targetPaneIndex] === thread.id) {
       setSelectedThreadId(thread.id);
       setSelectedThread(thread);
     }
@@ -636,7 +740,9 @@ export default function App() {
 
   function closeOpenThreads(threadIds: string[]) {
     const closing = new Set(threadIds);
-    setOpenThreadIds((current) => current.map((id) => (id && closing.has(id) ? null : id)));
+    const nextOpenThreadIds = openThreadIdsRef.current.map((id) => (id && closing.has(id) ? null : id));
+    openThreadIdsRef.current = nextOpenThreadIds;
+    setOpenThreadIds(nextOpenThreadIds);
     setOpenThreads((current) => {
       const next = { ...current };
       for (const threadId of closing) {
@@ -648,20 +754,38 @@ export default function App() {
     setSelectedThreadId((current) => (current && closing.has(current) ? null : current));
   }
 
-  async function selectThread(threadId: string, paneIndex = activePaneIndex) {
-    setActivePaneIndex(paneIndex);
+  async function selectThread(threadId: string, paneIndex = activePaneIndexRef.current) {
+    const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
+    const loadToken = ++threadLoadSeqRef.current;
+    paneThreadLoadTokensRef.current[targetPaneIndex] = loadToken;
+    setLoadingThreadByPane((current) => ({ ...current, [targetPaneIndex]: threadId }));
+    setPaneThreadId(targetPaneIndex, threadId);
+    activatePane(targetPaneIndex);
     setSelectedThreadId(threadId);
+    setSelectedThread(null);
     setMobilePane("thread");
-    const thread = await resumeThread(threadId, paneIndex);
-    if (thread) {
+    const thread = await resumeThread(threadId, targetPaneIndex, loadToken);
+    if (thread && isThreadLoadCurrent(targetPaneIndex, loadToken)) {
       setSelectedThread(thread);
     }
+    setLoadingThreadByPane((current) => {
+      if (current[targetPaneIndex] !== threadId || !isThreadLoadCurrent(targetPaneIndex, loadToken)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[targetPaneIndex];
+      return next;
+    });
   }
 
-  async function readThread(threadId: string, paneIndex = openThreadIds.indexOf(threadId)): Promise<Thread | null> {
+  async function readThread(threadId: string, paneIndex = openThreadIdsRef.current.indexOf(threadId), loadToken?: number): Promise<Thread | null> {
     try {
       const result = await rpc<{ thread: Thread }>("thread/read", { threadId, includeTurns: true });
-      rememberOpenThread(result.thread, paneIndex >= 0 ? paneIndex : activePaneIndex);
+      const targetPaneIndex = paneIndex >= 0 ? paneIndex : openThreadIdsRef.current.indexOf(threadId);
+      if (!canApplyThreadToPane(threadId, targetPaneIndex, loadToken)) {
+        return null;
+      }
+      rememberOpenThread(result.thread, targetPaneIndex, false);
       rememberSessionPreview(result.thread);
       rememberActiveTurn(result.thread);
       return result.thread;
@@ -671,10 +795,13 @@ export default function App() {
     }
   }
 
-  async function resumeThread(threadId: string, paneIndex = activePaneIndex): Promise<Thread | null> {
+  async function resumeThread(threadId: string, paneIndex = activePaneIndexRef.current, loadToken?: number): Promise<Thread | null> {
     try {
       const result = await rpc<{ thread: Thread }>("thread/resume", buildThreadLoadParams(threadId));
-      rememberOpenThread(result.thread, paneIndex);
+      if (!canApplyThreadToPane(threadId, paneIndex, loadToken)) {
+        return null;
+      }
+      rememberOpenThread(result.thread, paneIndex, false);
       rememberSessionPreview(result.thread);
       rememberActiveTurn(result.thread);
       setLoadedThreadIds((current) => new Set([...current, result.thread.id]));
@@ -682,22 +809,27 @@ export default function App() {
       scheduleListRefresh(1000);
       return result.thread;
     } catch (error) {
-      return readThread(threadId, paneIndex);
+      return readThread(threadId, paneIndex, loadToken);
     }
   }
 
-  async function sendMessageText(selected: Thread, text: string, action: ComposerAction = "send"): Promise<boolean> {
+  async function sendMessageText(selected: Thread, paneIndex: number, text: string, action: ComposerAction = "send"): Promise<boolean> {
     const trimmedText = text.trim();
     if (!trimmedText) {
       return false;
     }
     try {
       let thread = selected;
+      if (!canSendFromPane(thread.id, paneIndex)) {
+        throw new Error("Thread changed before send completed. Message was not sent.");
+      }
       if (!loadedThreadIds.has(thread.id) || statusType(thread) === "notLoaded") {
         const resumed = await rpc<{ thread: Thread }>("thread/resume", buildThreadLoadParams(thread.id));
         thread = resumed.thread;
-        const paneIndex = openThreadIds.indexOf(thread.id);
-        rememberOpenThread(thread, paneIndex >= 0 ? paneIndex : activePaneIndex);
+        if (!canSendFromPane(thread.id, paneIndex)) {
+          throw new Error("Thread changed before send completed. Message was not sent.");
+        }
+        rememberOpenThread(thread, paneIndex, false);
         setLoadedThreadIds((current) => new Set([...current, thread.id]));
       }
 
@@ -706,12 +838,18 @@ export default function App() {
         if (!currentActiveTurn) {
           throw new Error("No active turn is available to steer");
         }
+        if (!canSendFromPane(thread.id, paneIndex)) {
+          throw new Error("Thread changed before send completed. Message was not sent.");
+        }
         await rpc("turn/steer", {
           threadId: thread.id,
           expectedTurnId: currentActiveTurn,
           input: [{ type: "text", text: trimmedText }]
         });
       } else {
+        if (!canSendFromPane(thread.id, paneIndex)) {
+          throw new Error("Thread changed before send completed. Message was not sent.");
+        }
         await rpc("turn/start", buildTurnStartParams(thread.id, trimmedText));
       }
       scheduleThreadRefresh(thread.id, 800);
@@ -784,7 +922,9 @@ export default function App() {
         setShowArchived(false);
       } else {
         await rpc("thread/archive", { threadId: thread.id });
-        setOpenThreadIds((current) => current.map((id) => (id === thread.id ? null : id)));
+        const nextOpenThreadIds = openThreadIdsRef.current.map((id) => (id === thread.id ? null : id));
+        openThreadIdsRef.current = nextOpenThreadIds;
+        setOpenThreadIds(nextOpenThreadIds);
         setOpenThreads((current) => {
           const next = { ...current };
           delete next[thread.id];
@@ -812,7 +952,7 @@ export default function App() {
         threadSource: "user"
       });
       const result = await rpc<{ thread: Thread }>("thread/start", params);
-      rememberOpenThread(result.thread, activePaneIndex);
+      rememberOpenThread(result.thread, activePaneIndexRef.current);
       setNewSessionOpen(false);
       setShowArchived(false);
       await loadSessions();
@@ -860,6 +1000,12 @@ export default function App() {
       setOpenThreads((current) => (current[threadId] ? { ...current, [threadId]: { ...current[threadId], status: status as Thread["status"] } } : current));
       setSelectedThread((current) => (current?.id === threadId ? { ...current, status: status as Thread["status"] } : current));
     }
+    if (method === "account/rateLimits/updated") {
+      const nextRateLimits = parseRateLimitSnapshot(params.rateLimits);
+      if (nextRateLimits) {
+        setRateLimits(nextRateLimits);
+      }
+    }
     if (threadId && openThreadIdsRef.current.includes(threadId) && method.startsWith("item/")) {
       scheduleThreadRefresh(threadId, 800);
     }
@@ -888,7 +1034,24 @@ export default function App() {
     if (refreshTimerRef.current) {
       window.clearTimeout(refreshTimerRef.current);
     }
-    refreshTimerRef.current = window.setTimeout(() => readThread(threadId, paneIndex), delay);
+    refreshTimerRef.current = window.setTimeout(() => {
+      const currentPaneIndex = openThreadIdsRef.current.indexOf(threadId);
+      if (currentPaneIndex >= 0) {
+        void readThread(threadId, currentPaneIndex);
+      }
+    }, delay);
+  }
+
+  function isThreadLoadCurrent(paneIndex: number, loadToken?: number): boolean {
+    return loadToken === undefined || paneThreadLoadTokensRef.current[paneIndex] === loadToken;
+  }
+
+  function canApplyThreadToPane(threadId: string, paneIndex: number, loadToken?: number): boolean {
+    return paneIndex >= 0 && openThreadIdsRef.current[paneIndex] === threadId && isThreadLoadCurrent(paneIndex, loadToken);
+  }
+
+  function canSendFromPane(threadId: string, paneIndex: number): boolean {
+    return paneIndex >= 0 && openThreadIdsRef.current[paneIndex] === threadId;
   }
 
   function scheduleListRefresh(delay: number) {
@@ -938,50 +1101,65 @@ const ThreadPane = memo(function ThreadPane({
   allThreads,
   archiveLabel,
   isActive,
+  isLoading,
   onActivate,
   onArchive,
   onCompact,
   onFork,
   onInterrupt,
   onRename,
+  onError,
+  onOpenFile,
   onSelectThread,
   onSend,
   paneCount,
+  rateLimits,
   thread
 }: {
   activeTurnId: string | null;
   allThreads: Thread[];
   archiveLabel: string;
   isActive: boolean;
+  isLoading: boolean;
   onActivate: () => void;
   onArchive: () => void;
   onCompact: () => void;
   onFork: () => void;
   onInterrupt: () => void;
   onRename: (name: string) => Promise<void>;
+  onError: (error: unknown) => void;
+  onOpenFile: (reference: FileReference) => Promise<void>;
   onSelectThread: (threadId: string) => void;
   onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
   paneCount: ThreadPaneCount;
+  rateLimits: RateLimitSnapshot | null;
   thread: Thread | null;
 }) {
-  const [topHidden, setTopHidden] = useState(false);
+  const [topHidden, setTopHidden] = useState(() => isMobileViewport());
+  const [composerCollapsed, setComposerCollapsed] = useState(false);
   const conversationRef = useRef<HTMLDivElement | null>(null);
   const conversationScrollTopRef = useRef(0);
+  const composerManuallyCollapsedRef = useRef(false);
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
   const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [thread?.turns]);
+  const fileReferences = useMemo(() => thread ? extractFileReferences(thread) : [], [thread]);
 
   useEffect(() => {
     if (!thread) {
       lastThreadViewRef.current = "";
       lastItemCountRef.current = 0;
+      composerManuallyCollapsedRef.current = false;
       setTopHidden(false);
+      setComposerCollapsed(false);
       return;
     }
     if (lastThreadViewRef.current !== thread.id) {
       lastThreadViewRef.current = thread.id;
       lastItemCountRef.current = itemCount;
-      setTopHidden(false);
+      composerManuallyCollapsedRef.current = false;
+      setTopHidden(isMobileViewport());
+      setComposerCollapsed(false);
       scrollToEnd();
       return;
     }
@@ -992,16 +1170,40 @@ const ThreadPane = memo(function ThreadPane({
   }, [itemCount, thread]);
 
   function handleConversationScroll(event: UIEvent<HTMLDivElement>) {
-    const nextTop = event.currentTarget.scrollTop;
+    const element = event.currentTarget;
+    const nextTop = element.scrollTop;
     const previousTop = conversationScrollTopRef.current;
+    const scrollDelta = nextTop - previousTop;
+    const bottomDistance = element.scrollHeight - nextTop - element.clientHeight;
+    const scrollingTowardHistory = scrollDelta < -18;
+    const scrollingTowardBottom = scrollDelta > 18;
+    const nearBottom = bottomDistance < 24;
+    const awayFromBottom = bottomDistance > 120;
+
     conversationScrollTopRef.current = nextTop;
-    if (nextTop < 24) {
-      setTopHidden(false);
+
+    if (isMobileViewport()) {
+      if (scrollingTowardHistory && awayFromBottom) {
+        setTopHidden(false);
+        if (!composerManuallyCollapsedRef.current) {
+          setComposerCollapsed(true);
+        }
+        return;
+      }
+      if (nearBottom) {
+        setTopHidden(true);
+        if (!composerManuallyCollapsedRef.current) {
+          setComposerCollapsed(false);
+        }
+        return;
+      }
+      if (scrollingTowardBottom) {
+        setTopHidden(true);
+      }
       return;
     }
-    if (nextTop > previousTop + 8) {
-      setTopHidden(true);
-    } else if (nextTop < previousTop - 8) {
+
+    if (topHidden) {
       setTopHidden(false);
     }
   }
@@ -1014,7 +1216,18 @@ const ThreadPane = memo(function ThreadPane({
       }
       element.scrollTop = element.scrollHeight;
       conversationScrollTopRef.current = element.scrollTop;
+      if (isMobileViewport()) {
+        setTopHidden(true);
+        if (!composerManuallyCollapsedRef.current) {
+          setComposerCollapsed(false);
+        }
+      }
     });
+  }
+
+  function handleComposerCollapsedChange(collapsed: boolean) {
+    composerManuallyCollapsedRef.current = collapsed;
+    setComposerCollapsed(collapsed);
   }
 
   return (
@@ -1033,6 +1246,12 @@ const ThreadPane = memo(function ThreadPane({
             <StatusBadge value={statusType(thread)} />
             <EditableThreadTitle thread={thread} onRename={onRename} />
             <p>{thread.cwd || "cwd unavailable"} | {thread.id}</p>
+            <ThreadUsageStats rateLimits={rateLimits} />
+          </div>
+        ) : isLoading ? (
+          <div className="thread-title-block empty">
+            <h2>Loading thread</h2>
+            <p>Fetching the selected thread.</p>
           </div>
         ) : (
           <div className="thread-title-block empty">
@@ -1043,8 +1262,15 @@ const ThreadPane = memo(function ThreadPane({
       </header>
       {thread ? (
         <>
+          <FileReferenceBar references={fileReferences} onOpenFile={onOpenFile} />
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
-            <TurnHistory threadId={thread.id} turns={thread.turns ?? []} scrollContainerRef={conversationRef} />
+            <TurnHistory
+              cwd={thread.cwd || null}
+              onOpenFile={onOpenFile}
+              threadId={thread.id}
+              turns={thread.turns ?? []}
+              scrollContainerRef={conversationRef}
+            />
           </div>
           <Composer
             activeTurnId={activeTurnId}
@@ -1054,12 +1280,15 @@ const ThreadPane = memo(function ThreadPane({
             onCompact={onCompact}
             onArchive={onArchive}
             archiveLabel={archiveLabel}
+            collapsed={composerCollapsed}
+            onError={onError}
+            onCollapsedChange={handleComposerCollapsedChange}
           />
         </>
       ) : (
         <div className="empty-state">
-          <h2>Select a thread</h2>
-          <p>Choose an existing thread or start a new one.</p>
+          <h2>{isLoading ? "Loading thread" : "Select a thread"}</h2>
+          <p>{isLoading ? "Fetching the selected thread." : "Choose an existing thread or start a new one."}</p>
         </div>
       )}
     </section>
@@ -1169,40 +1398,171 @@ function ClerkLogoutButton({ onLogout }: { onLogout: () => Promise<void> }) {
   );
 }
 
+function StatusModal({
+  rateLimits,
+  status,
+  onClose,
+  onRefresh
+}: {
+  rateLimits: RateLimitSnapshot | null;
+  status: ServerStatus;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal status-modal" role="dialog" aria-modal="true" aria-labelledby="status-title">
+        <header className="modal-header">
+          <div>
+            <h2 id="status-title">Status</h2>
+            <p className="muted">{status.command ?? "codex"} {status.state ? `is ${status.state}` : ""}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="status-grid">
+          <StatusDetail label="5hr remaining" value={<QuotaMetric value={rateLimitRemainingPercent(rateLimits, "5hr")} />} />
+          <StatusDetail label="Weekly remaining" value={<QuotaMetric value={rateLimitRemainingPercent(rateLimits, "weekly")} />} />
+        </div>
+        <p className="muted">Rate limits use the app-server account quota snapshot.</p>
+        <footer className="modal-actions">
+          <button className="ghost-button" type="button" onClick={onClose}>Close</button>
+          <button className="primary-button" type="button" onClick={() => void onRefresh()}>
+            <RefreshCw size={16} /> Refresh
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function StatusDetail({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="status-detail">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function UsageStatusSummary({ compact = false, rateLimits }: { compact?: boolean; rateLimits: RateLimitSnapshot | null }) {
+  return (
+    <div className={`usage-status-summary ${compact ? "compact" : ""}`}>
+      <span>5hr left {formatPercentValue(rateLimitRemainingPercent(rateLimits, "5hr"))}</span>
+      <span>wk left {formatPercentValue(rateLimitRemainingPercent(rateLimits, "weekly"))}</span>
+    </div>
+  );
+}
+
+function QuotaMetric({ value }: { value: number | null }) {
+  return <span className={`usage-metric ${quotaMetricClass(value)}`}>{formatPercentValue(value)}</span>;
+}
+
+function FileReferenceBar({ references, onOpenFile }: { references: FileReference[]; onOpenFile: (reference: FileReference) => Promise<void> }) {
+  if (references.length === 0) {
+    return null;
+  }
+  return (
+    <div className="file-reference-bar" aria-label="Referenced files">
+      {references.slice(0, 16).map((reference) => (
+        <button
+          key={fileReferenceKey(reference)}
+          type="button"
+          onClick={() => void onOpenFile(reference)}
+          title={reference.path}
+        >
+          <Paperclip size={14} />
+          <span>{reference.label || reference.path}</span>
+        </button>
+      ))}
+      {references.length > 16 && <span className="muted">+{references.length - 16} more</span>}
+    </div>
+  );
+}
+
+function FileViewerModal({ file, reference, onClose }: { file: FilePreview; reference: FileReference; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal file-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="file-viewer-title">
+        <header className="modal-header">
+          <div className="file-viewer-title">
+            <h2 id="file-viewer-title">{file.name}</h2>
+            <p className="muted">{file.displayPath} | {formatFileSize(file.size)}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="file-viewer-body">
+          {renderFilePreview(file, reference)}
+        </div>
+        <footer className="modal-actions">
+          <a className="ghost-button" href={referencedFileDownloadUrl(reference)}>
+            Download
+          </a>
+          <button className="primary-button" type="button" onClick={onClose}>Done</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function renderFilePreview(file: FilePreview, reference: FileReference) {
+  const content = file.content ?? "";
+  if (file.kind === "image") {
+    return <img className="file-image-preview" src={referencedFileRawUrl(reference)} alt={file.name} />;
+  }
+  if (file.kind === "pdf") {
+    return <iframe className="file-pdf-preview" src={referencedFileRawUrl(reference)} title={file.name} />;
+  }
+  if (file.kind === "video") {
+    return <video className="file-video-preview" src={referencedFileRawUrl(reference)} controls playsInline preload="metadata" />;
+  }
+  if (file.kind === "json") {
+    return <pre className="json-block file-preview-block">{prettyJson(content)}</pre>;
+  }
+  if (file.kind === "markdown") {
+    return (
+      <div className="markdown file-markdown-preview">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+  if (file.kind === "code") {
+    return (
+      <SyntaxHighlighter language={languageForFile(file)} style={oneLight} customStyle={{ margin: 0, borderRadius: 6 }}>
+        {content}
+      </SyntaxHighlighter>
+    );
+  }
+  return <pre className="code-block file-preview-block">{content}</pre>;
+}
+
 const TurnHistory = memo(function TurnHistory({
+  cwd,
+  onOpenFile,
   scrollContainerRef,
   threadId,
   turns
 }: {
+  cwd: string | null;
+  onOpenFile: (reference: FileReference) => Promise<void>;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   threadId: string;
   turns: Turn[];
 }) {
-  const [visibleCount, setVisibleCount] = useState(DEFAULT_RENDERED_TURNS);
+  const [visibleCount, setVisibleCount] = useState(THREAD_ITEM_BATCH_SIZE);
   const pendingScrollHeightRef = useRef<number | null>(null);
-  const visibleTurns = useMemo(() => turns.slice(-visibleCount), [turns, visibleCount]);
-  const hiddenCount = Math.max(0, turns.length - visibleTurns.length);
+  const totalItemCount = useMemo(() => turns.reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [turns]);
+  const visibleTurns = useMemo(() => visibleTurnsByItemCount(turns, visibleCount), [turns, visibleCount]);
+  const visibleItemCount = useMemo(() => visibleTurns.reduce((count, turn) => count + turn.items.length, 0), [visibleTurns]);
+  const hiddenCount = Math.max(0, totalItemCount - visibleItemCount);
 
   useEffect(() => {
-    setVisibleCount(DEFAULT_RENDERED_TURNS);
+    setVisibleCount(THREAD_ITEM_BATCH_SIZE);
     pendingScrollHeightRef.current = null;
   }, [threadId]);
-
-  useEffect(() => {
-    const element = scrollContainerRef.current;
-    if (!element || hiddenCount === 0) {
-      return;
-    }
-    const handleScroll = () => {
-      if (element.scrollTop > 80 || pendingScrollHeightRef.current !== null) {
-        return;
-      }
-      pendingScrollHeightRef.current = element.scrollHeight;
-      setVisibleCount((current) => Math.min(turns.length, current + DEFAULT_RENDERED_TURNS));
-    };
-    element.addEventListener("scroll", handleScroll);
-    return () => element.removeEventListener("scroll", handleScroll);
-  }, [hiddenCount, scrollContainerRef, turns.length]);
 
   useLayoutEffect(() => {
     const previousHeight = pendingScrollHeightRef.current;
@@ -1214,10 +1574,10 @@ const TurnHistory = memo(function TurnHistory({
     pendingScrollHeightRef.current = null;
   }, [scrollContainerRef, visibleCount]);
 
-  if (turns.length === 0) {
+  if (turns.length === 0 || totalItemCount === 0) {
     return (
       <div className="empty-state inline">
-        <h2>No turns loaded</h2>
+        <h2>No items loaded</h2>
         <p>Select a thread or send a message.</p>
       </div>
     );
@@ -1226,61 +1586,87 @@ const TurnHistory = memo(function TurnHistory({
     <>
       {hiddenCount > 0 && (
         <div className="history-limit">
-          Showing latest {visibleTurns.length} of {turns.length} turns.
+          Showing latest {visibleItemCount} of {totalItemCount} items.
           <button
             type="button"
             onClick={() => {
               const element = scrollContainerRef.current;
               pendingScrollHeightRef.current = element?.scrollHeight ?? null;
-              setVisibleCount((current) => Math.min(turns.length, current + DEFAULT_RENDERED_TURNS));
+              setVisibleCount((current) => Math.min(totalItemCount, current + THREAD_ITEM_BATCH_SIZE));
             }}
           >
             Load earlier
           </button>
         </div>
       )}
-      {visibleTurns.map((turn) => (
+      {visibleTurns.map(({ turn, items }) => (
         <section className="turn-block" key={turn.id}>
           <div className="turn-heading">
             <StatusBadge value={turn.status} />
             <span>{turn.id}</span>
             <span>{formatDate(turn.startedAt)}</span>
           </div>
-          {(turn.items ?? []).map((item) => <ThreadItemView item={item} key={item.id} />)}
+          {items.map((item) => <ThreadItemView cwd={cwd} item={item} key={item.id} onOpenFile={onOpenFile} />)}
         </section>
       ))}
     </>
   );
 });
 
-const ThreadItemView = memo(function ThreadItemView({ item, compact = false }: { item: ThreadItem; compact?: boolean }) {
+function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: Turn; items: ThreadItem[] }[] {
+  const selected: { turn: Turn; items: ThreadItem[] }[] = [];
+  let remaining = visibleCount;
+  for (let index = turns.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const turn = turns[index];
+    const items = turn?.items ?? [];
+    if (items.length === 0) {
+      continue;
+    }
+    const visibleItems = items.slice(Math.max(0, items.length - remaining));
+    selected.unshift({ turn, items: visibleItems });
+    remaining -= visibleItems.length;
+  }
+  return selected;
+}
+
+const ThreadItemView = memo(function ThreadItemView({
+  cwd,
+  item,
+  compact = false,
+  onOpenFile
+}: {
+  cwd: string | null;
+  item: ThreadItem;
+  compact?: boolean;
+  onOpenFile: (reference: FileReference) => Promise<void>;
+}) {
   return (
     <article className={`item ${kindClass(item.type)} ${compact ? "compact" : ""}`}>
       <div className="item-kind">{labelForKind(item.type)}</div>
-      <div className="item-body">{renderItemBody(item)}</div>
+      <div className="item-body">{renderItemBody(item, cwd, onOpenFile)}</div>
     </article>
   );
 });
 
-function renderItemBody(item: ThreadItem) {
+function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (reference: FileReference) => Promise<void>) {
   if (item.type === "userMessage") {
-    return <MarkdownText text={userInputText(item.content)} />;
+    return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={userInputText(item.content)} />;
   }
   if (item.type === "agentMessage") {
     return (
       <>
         {typeof item.phase === "string" && <p className="muted">{item.phase}</p>}
-        <MarkdownText text={typeof item.text === "string" ? item.text : ""} />
+        <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={typeof item.text === "string" ? item.text : ""} />
       </>
     );
   }
   if (item.type === "reasoning") {
     const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : "";
     const content = Array.isArray(item.content) ? item.content.join("\n\n") : "";
-    return <MarkdownText text={[summary, content].filter(Boolean).join("\n\n") || "Reasoning"} />;
+    return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={[summary, content].filter(Boolean).join("\n\n") || "Reasoning"} />;
   }
   if (item.type === "plan") {
-    return <MarkdownText text={typeof item.text === "string" ? item.text : "Plan updated"} />;
+    return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={typeof item.text === "string" ? item.text : "Plan updated"} />;
   }
   if (item.type === "commandExecution") {
     return (
@@ -1311,7 +1697,7 @@ function renderItemBody(item: ThreadItem) {
     );
   }
   if (item.type === "webSearch") {
-    return <MarkdownText text={typeof item.query === "string" ? item.query : "Web search"} />;
+    return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={typeof item.query === "string" ? item.query : "Web search"} />;
   }
   if (item.type === "imageView") {
     return <p>{String(item.path ?? "Image viewed")}</p>;
@@ -1319,10 +1705,43 @@ function renderItemBody(item: ThreadItem) {
   return <pre className="json-block">{JSON.stringify(item, null, 2)}</pre>;
 }
 
-const MarkdownText = memo(function MarkdownText({ text }: { text: string }) {
+const MarkdownText = memo(function MarkdownText({
+  cwd,
+  onOpenFile,
+  text
+}: {
+  cwd: string | null;
+  onOpenFile: (reference: FileReference) => Promise<void>;
+  text: string;
+}) {
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a({ href, children }) {
+            const pathValue = href ? filePathFromHref(href) : "";
+            if (pathValue && looksLikeFileReference(pathValue)) {
+              return (
+                <button
+                  className="file-link-button"
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void onOpenFile({ path: pathValue, cwd, label: markdownChildrenText(children) || pathValue });
+                  }}
+                >
+                  {children}
+                </button>
+              );
+            }
+            return <a href={href}>{children}</a>;
+          }
+        }}
+      >
+        {linkifyFileReferences(text)}
+      </ReactMarkdown>
     </div>
   );
 });
@@ -1558,6 +1977,23 @@ const StatusBadge = memo(function StatusBadge({ value }: { value: string | undef
   return <span className={`status-badge ${statusClass(text)}`}>{text}</span>;
 });
 
+const ThreadUsageStats = memo(function ThreadUsageStats({ rateLimits }: { rateLimits: RateLimitSnapshot | null }) {
+  if (!rateLimits) {
+    return null;
+  }
+  return (
+    <div
+      className="thread-usage-stats"
+      title={[
+        `5hr remaining ${formatPercentValue(rateLimitRemainingPercent(rateLimits, "5hr"))}`,
+        `Weekly remaining ${formatPercentValue(rateLimitRemainingPercent(rateLimits, "weekly"))}`
+      ].join(" | ")}
+    >
+      <UsageStatusSummary rateLimits={rateLimits} compact />
+    </div>
+  );
+});
+
 function statusType(thread: Thread | null): string {
   if (!thread?.status) {
     return "unknown";
@@ -1568,22 +2004,29 @@ function statusType(thread: Thread | null): string {
 const Composer = memo(function Composer({
   activeTurnId,
   archiveLabel,
+  collapsed,
   onArchive,
   onCompact,
+  onCollapsedChange,
+  onError,
   onFork,
   onInterrupt,
   onSend
 }: {
   activeTurnId: string | null;
   archiveLabel: string;
+  collapsed: boolean;
   onArchive: () => void;
   onCompact: () => void;
+  onCollapsedChange: (collapsed: boolean) => void;
+  onError: (error: unknown) => void;
   onFork: () => void;
   onInterrupt: () => void;
   onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState("");
-  const [collapsed, setCollapsed] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   async function submitDraft(action: ComposerAction) {
     const sent = await onSend(draft, action);
     if (sent) {
@@ -1591,10 +2034,28 @@ const Composer = memo(function Composer({
     }
   }
 
+  async function handleAttachmentFile(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+    setUploading(true);
+    try {
+      const attachment = await uploadAttachment(file);
+      setDraft((current) => (current.trim() ? `${current}\n${attachment.path}` : attachment.path));
+    } catch (error) {
+      onError(error);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  }
+
   if (collapsed) {
     return (
       <div className="composer collapsed">
-        <button className="primary-button" type="button" onClick={() => setCollapsed(false)}>
+        <button className="primary-button" type="button" onClick={() => onCollapsedChange(false)}>
           <Send size={16} /> Compose
         </button>
       </div>
@@ -1610,7 +2071,7 @@ const Composer = memo(function Composer({
       }}
     >
       <div className="composer-top">
-        <button className="icon-button" type="button" onClick={() => setCollapsed(true)} title="Collapse composer" aria-label="Collapse composer">
+        <button className="icon-button" type="button" onClick={() => onCollapsedChange(true)} title="Collapse composer" aria-label="Collapse composer">
           <ChevronsDown size={17} />
         </button>
         <button className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} title="Interrupt" aria-label="Interrupt">
@@ -1627,6 +2088,22 @@ const Composer = memo(function Composer({
       <div className="composer-bottom">
         <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
         <div className="composer-actions">
+          <input
+            className="file-input"
+            ref={fileInputRef}
+            type="file"
+            onChange={(event) => void handleAttachmentFile(event.currentTarget.files?.[0])}
+          />
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Attach file"
+            aria-label="Attach file"
+          >
+            <Paperclip size={17} />
+          </button>
           <button className={activeTurnId ? "queue-button" : "primary-button"} type="submit">
             <Send size={16} /> {activeTurnId ? "Enqueue" : "Send"}
           </button>
@@ -1701,6 +2178,192 @@ function lastMessagePreview(thread: Thread): string {
   return thread.preview || "";
 }
 
+function extractFileReferences(thread: Thread): FileReference[] {
+  const references = new Map<string, FileReference>();
+  const cwd = thread.cwd || null;
+  for (const turn of thread.turns ?? []) {
+    for (const item of turn.items ?? []) {
+      for (const pathValue of pathsFromItem(item)) {
+        addFileReference(references, { path: pathValue, cwd, label: labelForPath(pathValue) });
+      }
+    }
+  }
+  return [...references.values()];
+}
+
+function pathsFromItem(item: ThreadItem): string[] {
+  const paths: string[] = [];
+  if (item.type === "userMessage") {
+    paths.push(...extractPathCandidates(userInputText(item.content)));
+  }
+  if (typeof item.text === "string") {
+    paths.push(...extractPathCandidates(item.text));
+  }
+  if (typeof item.path === "string") {
+    paths.push(item.path);
+  }
+  if (typeof item.aggregatedOutput === "string") {
+    paths.push(...extractPathCandidates(item.aggregatedOutput));
+  }
+  const changes = item.changes;
+  if (Array.isArray(changes)) {
+    for (const change of changes) {
+      const record = asRecord(change);
+      if (typeof record.path === "string") {
+        paths.push(record.path);
+      }
+    }
+  }
+  return uniqueFilePaths(paths);
+}
+
+function extractPathCandidates(text: string): string[] {
+  const matches: string[] = [];
+  const pattern = /(?:^|[\s`"'(\[])([~./A-Za-z0-9_-][^\s`"'<>)]{0,240}\.(?:json|md|markdown|mdx|py|tsx?|jsx?|css|scss|html|yaml|yml|toml|txt|log|csv|rs|go|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|bash|zsh|fish|sql|xml|vue|svelte|png|jpe?g|gif|webp|bmp|avif|svg|pdf|mp4|m4v|webm|mov|ogv|ogg|avi|mkv|3gp|docx?|xlsx?|pptx?)(?::\d+(?::\d+)?)?)/gi;
+  for (const match of text.matchAll(pattern)) {
+    const pathValue = cleanFileReferencePath(match[1] || "");
+    if (pathValue && looksLikeFileReference(pathValue)) {
+      matches.push(pathValue);
+    }
+  }
+  return uniqueFilePaths(matches);
+}
+
+function linkifyFileReferences(text: string): string {
+  const pattern = /(^|[\s"'])([~./A-Za-z0-9_-][^\s`"'<>)]{0,240}\.(?:json|md|markdown|mdx|py|tsx?|jsx?|css|scss|html|yaml|yml|toml|txt|log|csv|rs|go|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|bash|zsh|fish|sql|xml|vue|svelte|png|jpe?g|gif|webp|bmp|avif|svg|pdf|mp4|m4v|webm|mov|ogv|ogg|avi|mkv|3gp|docx?|xlsx?|pptx?)(?::\d+(?::\d+)?)?)/gi;
+  let inFence = false;
+  return text.split("\n").map((line) => {
+    if (line.trimStart().startsWith("```")) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence || line.includes("](")) {
+      return line;
+    }
+    return line.replace(pattern, (match, prefix: string, pathValue: string, offset: number, source: string) => {
+      const pathOffset = offset + prefix.length;
+      const previous = source[pathOffset - 1] || "";
+      if (previous === "`" || previous === "[" || previous === "(") {
+        return match;
+      }
+      const cleanPath = cleanFileReferencePath(pathValue);
+      if (!looksLikeFileReference(cleanPath)) {
+        return match;
+      }
+      return `${prefix}[${pathValue}](${encodeURI(cleanPath)})`;
+    });
+  }).join("\n");
+}
+
+function uniqueFilePaths(paths: string[]): string[] {
+  return [...new Set(paths.map(cleanFileReferencePath).filter((pathValue) => pathValue && looksLikeFileReference(pathValue)))];
+}
+
+function cleanFileReferencePath(value: string): string {
+  return stripLineSuffix(value.trim().replace(/[.,;:!?]+$/g, ""));
+}
+
+function addFileReference(references: Map<string, FileReference>, reference: FileReference): void {
+  const key = fileReferenceKey(reference);
+  if (!references.has(key)) {
+    references.set(key, reference);
+  }
+}
+
+function fileReferenceKey(reference: FileReference): string {
+  return `${reference.cwd || ""}\n${reference.path}`;
+}
+
+function filePathFromHref(href: string): string {
+  if (!href || href.startsWith("#") || /^(?:mailto:|data:|blob:)/i.test(href)) {
+    return "";
+  }
+  if (/^https?:/i.test(href)) {
+    try {
+      const url = new URL(href);
+      const pathValue = cleanFileReferencePath(decodeURIComponent(url.pathname));
+      const currentOrigin = typeof window !== "undefined" ? window.location.origin : "";
+      if (url.origin === currentOrigin || looksLikeAbsoluteLocalPath(pathValue)) {
+        return pathValue;
+      }
+    } catch {
+      return "";
+    }
+    return "";
+  }
+  if (href.startsWith("file://")) {
+    try {
+      return cleanFileReferencePath(decodeURIComponent(new URL(href).pathname));
+    } catch {
+      return cleanFileReferencePath(href.replace(/^file:\/\//, ""));
+    }
+  }
+  return cleanFileReferencePath(decodeURIComponent(href.split("#")[0]?.split("?")[0] || href));
+}
+
+function looksLikeAbsoluteLocalPath(pathValue: string): boolean {
+  return /^\/(?:home|Users|tmp|var|mnt|opt|workspace|app)\//.test(pathValue);
+}
+
+function looksLikeFileReference(pathValue: string): boolean {
+  if (!pathValue || pathValue.includes("://") || pathValue.startsWith("@")) {
+    return false;
+  }
+  return /\.(?:json|md|markdown|mdx|py|tsx?|jsx?|css|scss|html|yaml|yml|toml|txt|log|csv|rs|go|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|bash|zsh|fish|sql|xml|vue|svelte|png|jpe?g|gif|webp|bmp|avif|svg|pdf|mp4|m4v|webm|mov|ogv|ogg|avi|mkv|3gp|docx?|xlsx?|pptx?)$/i.test(stripLineSuffix(pathValue));
+}
+
+function stripLineSuffix(value: string): string {
+  return value.replace(/:\d+(?::\d+)?$/, "");
+}
+
+function labelForPath(pathValue: string): string {
+  const clean = stripLineSuffix(pathValue);
+  return clean.split(/[\\/]/).filter(Boolean).at(-1) || clean;
+}
+
+function markdownChildrenText(value: ReactNode): string {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(markdownChildrenText).join("");
+  }
+  return "";
+}
+
+function prettyJson(content: string): string {
+  try {
+    return JSON.stringify(JSON.parse(content), null, 2);
+  } catch {
+    return content;
+  }
+}
+
+function languageForFile(file: FilePreview): string {
+  const map: Record<string, string> = {
+    js: "javascript",
+    jsx: "jsx",
+    ts: "typescript",
+    tsx: "tsx",
+    py: "python",
+    rs: "rust",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    yml: "yaml",
+    yaml: "yaml",
+    md: "markdown",
+    markdown: "markdown"
+  };
+  return map[file.extension] || file.extension || "text";
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function isWithinHorizontalScroller(target: EventTarget | null, stopAt: Element): boolean {
   if (!(target instanceof Element)) {
     return false;
@@ -1716,6 +2379,10 @@ function isWithinHorizontalScroller(target: EventTarget | null, stopAt: Element)
 function canScrollHorizontally(element: Element): boolean {
   const overflowX = window.getComputedStyle(element).overflowX;
   return ["auto", "scroll", "overlay"].includes(overflowX) && element.scrollWidth > element.clientWidth + 1;
+}
+
+function isMobileViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 780px)").matches;
 }
 
 function activeTurnFromThread(thread: Thread): string | null {
@@ -1787,6 +2454,56 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function parseRateLimitsResponse(value: unknown): RateLimitSnapshot | null {
+  const record = asRecord(value);
+  const byLimitId = asRecord(record.rateLimitsByLimitId);
+  const codex = parseRateLimitSnapshot(byLimitId.codex);
+  return codex ?? parseRateLimitSnapshot(record.rateLimits);
+}
+
+function parseRateLimitSnapshot(value: unknown): RateLimitSnapshot | null {
+  const record = asRecord(value);
+  const primary = parseRateLimitWindow(record.primary);
+  const secondary = parseRateLimitWindow(record.secondary);
+  if (!primary && !secondary) {
+    return null;
+  }
+  return {
+    limitId: typeof record.limitId === "string" ? record.limitId : null,
+    limitName: typeof record.limitName === "string" ? record.limitName : null,
+    primary,
+    secondary
+  };
+}
+
+function parseRateLimitWindow(value: unknown) {
+  const record = asRecord(value);
+  const usedPercent = numberValue(record.usedPercent);
+  if (usedPercent === null) {
+    return null;
+  }
+  return {
+    usedPercent,
+    windowDurationMins: typeof record.windowDurationMins === "number" ? record.windowDurationMins : null,
+    resetsAt: typeof record.resetsAt === "number" ? record.resetsAt : null
+  };
+}
+
+function rateLimitRemainingPercent(rateLimits: RateLimitSnapshot | null, target: "5hr" | "weekly"): number | null {
+  if (!rateLimits) {
+    return null;
+  }
+  const windows = [rateLimits.primary, rateLimits.secondary].filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const targetMinutes = target === "5hr" ? 300 : 10_080;
+  const byDuration = windows.find((item) => item.windowDurationMins !== null && Math.abs(item.windowDurationMins - targetMinutes) <= 30);
+  const usedPercent = byDuration?.usedPercent ?? (target === "5hr" ? rateLimits.primary?.usedPercent ?? null : rateLimits.secondary?.usedPercent ?? null);
+  return usedPercent === null ? null : Math.max(0, Math.min(100, 100 - usedPercent));
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function threadIdFromThread(value: unknown): string {
   const record = asRecord(value);
   return typeof record.id === "string" ? record.id : "";
@@ -1800,6 +2517,17 @@ function formatDate(seconds: number | null | undefined): string {
 
 function shortId(id: string): string {
   return id.length > 14 ? `${id.slice(0, 8)}...${id.slice(-4)}` : id;
+}
+
+function formatPercentValue(value: number | null): string {
+  return value === null ? "--" : `${Math.round(value)}%`;
+}
+
+function quotaMetricClass(value: number | null): string {
+  if (value === null) return "neutral";
+  if (value <= 10) return "bad";
+  if (value <= 30) return "busy";
+  return "good";
 }
 
 function truncate(value: string, limit: number): string {

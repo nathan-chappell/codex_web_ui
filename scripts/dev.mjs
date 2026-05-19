@@ -1,20 +1,37 @@
 import { spawn } from "node:child_process";
 
-const children = [
-  spawn("npm", ["run", "dev:api"], { stdio: "inherit" }),
-  spawn("npm", ["run", "dev:client"], { stdio: "inherit" })
+const services = [
+  { name: "api", args: ["run", "dev:api"], restartDelayMs: 1000 },
+  { name: "client", args: ["run", "dev:client"], restartDelayMs: 1000 }
 ];
 
 let shuttingDown = false;
+const children = new Map();
+const restartTimers = new Set();
 
-for (const child of children) {
+for (const service of services) {
+  startService(service);
+}
+
+function startService(service) {
+  const child = spawn("npm", service.args, { stdio: "inherit" });
+  children.set(service.name, child);
+
   child.on("exit", (code, signal) => {
+    children.delete(service.name);
     if (shuttingDown) {
       return;
     }
-    shuttingDown = true;
-    stopChildren();
-    process.exit(code ?? (signal ? 1 : 0));
+
+    const reason = signal ? `signal ${signal}` : `code ${code ?? 0}`;
+    console.error(`[dev] ${service.name} exited with ${reason}; restarting in ${service.restartDelayMs}ms`);
+    const timer = setTimeout(() => {
+      restartTimers.delete(timer);
+      if (!shuttingDown) {
+        startService(service);
+      }
+    }, service.restartDelayMs);
+    restartTimers.add(timer);
   });
 }
 
@@ -31,9 +48,15 @@ process.on("SIGTERM", () => {
 });
 
 function stopChildren() {
-  for (const child of children) {
+  for (const timer of restartTimers) {
+    clearTimeout(timer);
+  }
+  restartTimers.clear();
+
+  for (const child of children.values()) {
     if (!child.killed) {
       child.kill("SIGTERM");
     }
   }
+  children.clear();
 }

@@ -1,4 +1,4 @@
-import type { AuthState, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus } from "./types";
+import type { AuthState, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
 
 export async function getAuth(): Promise<AuthState> {
   const body = await getJson<AuthState>("/api/auth");
@@ -47,6 +47,33 @@ export async function createRepository(parentPath: string, name: string): Promis
   return body.browser;
 }
 
+export async function uploadAttachment(file: File): Promise<UploadedAttachment> {
+  const response = await fetch("/api/uploads", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": file.type || "application/octet-stream",
+      "X-File-Name": encodeURIComponent(file.name)
+    },
+    body: file
+  });
+  const body = await parseResponse<{ attachment: UploadedAttachment }>(response);
+  return body.attachment;
+}
+
+export async function readReferencedFile(reference: FileReference): Promise<FilePreview> {
+  const body = await getJson<{ file: FilePreview }>(fileQueryUrl("/api/files/view", reference));
+  return body.file;
+}
+
+export function referencedFileDownloadUrl(reference: FileReference): string {
+  return fileQueryUrl("/api/files/download", reference);
+}
+
+export function referencedFileRawUrl(reference: FileReference): string {
+  return fileQueryUrl("/api/files/raw", reference);
+}
+
 export function openEventStream(onEvent: (event: ServerEvent) => void, onHello: (events: ServerEvent[]) => void): EventSource {
   const source = new EventSource("/api/events");
   source.addEventListener("hello", (event) => {
@@ -57,6 +84,14 @@ export function openEventStream(onEvent: (event: ServerEvent) => void, onHello: 
     onEvent(JSON.parse((event as MessageEvent).data) as ServerEvent);
   });
   return source;
+}
+
+function fileQueryUrl(baseUrl: string, reference: FileReference): string {
+  const params = new URLSearchParams({ path: reference.path });
+  if (reference.cwd) {
+    params.set("cwd", reference.cwd);
+  }
+  return `${baseUrl}?${params.toString()}`;
 }
 
 async function getJson<T>(url: string): Promise<T> {

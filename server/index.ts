@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -57,7 +57,24 @@ const mimeTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
-  ".ico": "image/x-icon"
+  ".ico": "image/x-icon",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".avif": "image/avif",
+  ".pdf": "application/pdf",
+  ".mp4": "video/mp4",
+  ".m4v": "video/x-m4v",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".ogv": "video/ogg",
+  ".ogg": "video/ogg",
+  ".avi": "video/x-msvideo",
+  ".mkv": "video/x-matroska",
+  ".3gp": "video/3gpp"
 };
 
 await logs.ensure();
@@ -144,6 +161,22 @@ const server = http.createServer(async (req, res) => {
       }
       const result = await bridge.request(body.method, (body.params ?? {}) as JsonValue);
       return sendJson(res, 200, { ok: true, result });
+    }
+
+    if (url.pathname === "/api/uploads" && req.method === "POST") {
+      return sendJson(res, 200, { ok: true, attachment: await saveUploadedFile(req) });
+    }
+
+    if (url.pathname === "/api/files/view" && req.method === "GET") {
+      return sendJson(res, 200, { ok: true, file: await readReferencedFile(url.searchParams) });
+    }
+
+    if (url.pathname === "/api/files/download" && (req.method === "GET" || req.method === "HEAD")) {
+      return sendReferencedFile(url.searchParams, res, req.method === "HEAD", false, req.headers.range);
+    }
+
+    if (url.pathname === "/api/files/raw" && (req.method === "GET" || req.method === "HEAD")) {
+      return sendReferencedFile(url.searchParams, res, req.method === "HEAD", true, req.headers.range);
     }
 
     if (url.pathname === "/api/server/restart" && req.method === "POST") {
@@ -416,6 +449,169 @@ async function createRepository(parentPath: unknown, name: unknown): Promise<Rec
   return browseRepositories(repoPath);
 }
 
+async function saveUploadedFile(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const encodedName = headerValue(req.headers["x-file-name"]);
+  const originalName = encodedName ? decodeURIComponent(encodedName) : "upload";
+  const safeName = safeUploadName(originalName);
+  const uploadDir = path.resolve(process.env.CODEX_WEB_UI_UPLOAD_DIR || path.join(projectRoot, "data/uploads"));
+  const body = await readBinaryBody(req, 50 * 1024 * 1024);
+  if (body.length === 0) {
+    throw new Error("Uploaded file is empty");
+  }
+  await mkdir(uploadDir, { recursive: true });
+  const filePath = path.join(uploadDir, `${Date.now()}-${crypto.randomUUID()}-${safeName}`);
+  await writeFile(filePath, body, { flag: "wx" });
+  return {
+    path: filePath,
+    displayPath: displayPath(filePath),
+    name: originalName,
+    size: body.length
+  };
+}
+
+async function readReferencedFile(searchParams: URLSearchParams): Promise<Record<string, unknown>> {
+  const filePath = resolveReferencedFilePath(searchParams.get("path"), searchParams.get("cwd"));
+  const stats = statSync(filePath);
+  if (!stats.isFile()) {
+    throw new Error("Referenced path is not a file");
+  }
+  const kind = previewKindForPath(filePath);
+  const maxBytes = 2 * 1024 * 1024;
+  if (kind === "image" || kind === "pdf" || kind === "video") {
+    return fileMetadata(filePath, stats.size, kind, true);
+  }
+  if (!kind || stats.size > maxBytes) {
+    return fileMetadata(filePath, stats.size, kind, false);
+  }
+  const content = await readFile(filePath, "utf8");
+  return {
+    ...fileMetadata(filePath, stats.size, kind, true),
+    content
+  };
+}
+
+function sendReferencedFile(searchParams: URLSearchParams, res: ServerResponse, headOnly: boolean, inline = false, rangeHeader?: string | string[]): void {
+  const filePath = resolveReferencedFilePath(searchParams.get("path"), searchParams.get("cwd"));
+  const stats = statSync(filePath);
+  if (!stats.isFile()) {
+    return sendJson(res, 404, { ok: false, error: "Referenced path is not a file" });
+  }
+  const fileName = path.basename(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+  const range = parseRangeHeader(headerValue(rangeHeader), stats.size);
+  if (rangeHeader && !range) {
+    res.writeHead(416, {
+      "Content-Range": `bytes */${stats.size}`,
+      "Accept-Ranges": "bytes"
+    });
+    res.end();
+    return;
+  }
+  const start = range?.start ?? 0;
+  const end = range?.end ?? stats.size - 1;
+  const contentLength = end - start + 1;
+  res.writeHead(range ? 206 : 200, {
+    "Content-Type": mimeTypes[ext] || "application/octet-stream",
+    "Content-Length": String(contentLength),
+    "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${fileName.replace(/"/g, "")}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    "Cache-Control": "private, max-age=60",
+    "Accept-Ranges": "bytes",
+    ...(range ? { "Content-Range": `bytes ${start}-${end}/${stats.size}` } : {})
+  });
+  if (headOnly) {
+    res.end();
+    return;
+  }
+  createReadStream(filePath, { start, end }).pipe(res);
+}
+
+function resolveReferencedFilePath(inputPath: string | null, cwd: string | null): string {
+  const value = inputPath?.trim();
+  if (!value) {
+    throw new Error("Missing file path");
+  }
+  if (value === "~") {
+    return homeDir;
+  }
+  if (value.startsWith("~/")) {
+    return path.resolve(homeDir, value.slice(2));
+  }
+  if (path.isAbsolute(value)) {
+    return path.resolve(value);
+  }
+  const base = cwd?.trim() ? path.resolve(cwd) : bridge.summary().cwd;
+  return path.resolve(typeof base === "string" ? base : projectRoot, value);
+}
+
+function fileMetadata(filePath: string, size: number, kind: string | null, previewable: boolean): Record<string, unknown> {
+  return {
+    path: filePath,
+    displayPath: displayPath(filePath),
+    name: path.basename(filePath),
+    extension: path.extname(filePath).slice(1).toLowerCase(),
+    mimeType: mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
+    size,
+    kind: kind || "download",
+    previewable
+  };
+}
+
+function previewKindForPath(filePath: string): string | null {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "svg"].includes(ext)) return "image";
+  if (ext === "pdf") return "pdf";
+  if (["mp4", "m4v", "webm", "mov", "ogv", "ogg", "avi", "mkv", "3gp"].includes(ext)) return "video";
+  if (ext === "json") return "json";
+  if (["md", "markdown", "mdx"].includes(ext)) return "markdown";
+  if (["txt", "log", "csv", "yaml", "yml", "toml", "ini", "env"].includes(ext)) return "text";
+  if (["js", "jsx", "ts", "tsx", "py", "rs", "go", "java", "kt", "swift", "c", "h", "cpp", "hpp", "cs", "rb", "php", "sh", "bash", "zsh", "fish", "sql", "css", "scss", "html", "xml", "vue", "svelte", "dockerfile"].includes(ext)) {
+    return "code";
+  }
+  return null;
+}
+
+function headerValue(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+function parseRangeHeader(value: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || size <= 0) {
+    return null;
+  }
+
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) {
+    return null;
+  }
+
+  if (!rawStart) {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return null;
+    }
+    return {
+      start: Math.max(size - suffixLength, 0),
+      end: size - 1
+    };
+  }
+
+  const start = Number(rawStart);
+  const end = rawEnd ? Number(rawEnd) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) {
+    return null;
+  }
+  return {
+    start,
+    end: Math.min(end, size - 1)
+  };
+}
+
+function safeUploadName(name: string): string {
+  const baseName = path.basename(name || "upload").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return baseName || "upload";
+}
+
 function resolveExplorerPath(inputPath: unknown): string {
   const value = typeof inputPath === "string" && inputPath.trim() ? inputPath.trim() : homeDir;
   if (value === "~") {
@@ -455,18 +651,22 @@ async function runGitInit(repoPath: string): Promise<void> {
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const text = (await readBinaryBody(req, 1_000_000)).toString("utf8").trim();
+  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
+}
+
+async function readBinaryBody(req: IncomingMessage, limitBytes: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > 1_000_000) {
+    if (size > limitBytes) {
       throw new Error("Request body is too large");
     }
     chunks.push(buffer);
   }
-  const text = Buffer.concat(chunks).toString("utf8").trim();
-  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  return Buffer.concat(chunks);
 }
 
 function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
