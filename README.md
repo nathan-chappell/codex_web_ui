@@ -25,9 +25,9 @@ For development, run the backend, Vite, and a sibling Codex app-server process:
 CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev
 ```
 
-In dev mode, the backend connects to Codex through `codex app-server proxy`
-using `CODEX_APP_SERVER_SOCKET` instead of owning the app-server directly. That
-lets backend watch restarts reconnect without terminating active Codex work.
+In dev mode, the backend connects directly to the sibling app-server over
+`CODEX_APP_SERVER_SOCKET` instead of owning the app-server process. That lets
+backend watch restarts reconnect without terminating active Codex work.
 
 For an ngrok-facing local watch mode without Vite, rebuild the frontend on
 change and restart the backend on server changes:
@@ -37,8 +37,8 @@ CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 PORT=4545 npm run watch
 ```
 
 This serves the rebuilt frontend from `dist/public`, keeps a sibling
-`codex app-server` process running, and reconnects the backend through the
-socket proxy after backend restarts.
+`codex app-server` process running, and reconnects the backend to the socket
+after backend restarts.
 
 You can also run the pieces manually:
 
