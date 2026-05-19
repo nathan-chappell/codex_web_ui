@@ -2,6 +2,7 @@ import {
   Archive,
   ChevronUp,
   ChevronsDown,
+  FileDiff,
   Folder,
   FolderGit2,
   GitFork,
@@ -1678,12 +1679,7 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
     );
   }
   if (item.type === "fileChange") {
-    return (
-      <>
-        <p>{String(item.status ?? "changed")}</p>
-        <pre className="json-block">{JSON.stringify(item.changes ?? [], null, 2)}</pre>
-      </>
-    );
+    return <FileChangeView cwd={cwd} item={item} onOpenFile={onOpenFile} />;
   }
   if (item.type === "mcpToolCall" || item.type === "dynamicToolCall") {
     return (
@@ -1703,6 +1699,140 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
     return <p>{String(item.path ?? "Image viewed")}</p>;
   }
   return <pre className="json-block">{JSON.stringify(item, null, 2)}</pre>;
+}
+
+function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: ThreadItem; onOpenFile: (reference: FileReference) => Promise<void> }) {
+  const changes = parseFileChanges(item.changes);
+  if (changes.length === 0) {
+    return (
+      <>
+        <p>{String(item.status ?? "changed")}</p>
+        <pre className="json-block">{JSON.stringify(item.changes ?? [], null, 2)}</pre>
+      </>
+    );
+  }
+
+  const totals = changes.reduce(
+    (current, change) => ({
+      added: current.added + change.stats.added,
+      removed: current.removed + change.stats.removed
+    }),
+    { added: 0, removed: 0 }
+  );
+
+  return (
+    <div className="file-change-view">
+      <div className="file-change-summary">
+        <span>{String(item.status ?? "changed")}</span>
+        <strong>{changes.length} file{changes.length === 1 ? "" : "s"}</strong>
+        <span className="diff-stat add">+{totals.added}</span>
+        <span className="diff-stat remove">-{totals.removed}</span>
+      </div>
+      <div className="file-change-list">
+        {changes.map((change, index) => (
+          <section className="file-diff-card" key={`${change.path}-${index}`}>
+            <header className="file-diff-header">
+              <button
+                className="file-diff-path"
+                type="button"
+                onClick={() => void onOpenFile({ path: change.path, cwd, label: labelForPath(change.path) })}
+                title={change.path}
+              >
+                <FileDiff size={15} />
+                <span>{displayDiffPath(change.path)}</span>
+              </button>
+              <div className="file-diff-meta">
+                <span>{change.kind}</span>
+                {change.movePath && <span>from {displayDiffPath(change.movePath)}</span>}
+                <span className="diff-stat add">+{change.stats.added}</span>
+                <span className="diff-stat remove">-{change.stats.removed}</span>
+              </div>
+            </header>
+            {change.lines.length > 0 ? (
+              <div className="diff-block" role="table" aria-label={`Diff for ${change.path}`}>
+                {change.lines.map((line, lineIndex) => (
+                  <div className={`diff-line ${line.kind}`} role="row" key={`${lineIndex}-${line.text}`}>
+                    <span className="diff-line-marker" aria-hidden="true">{diffMarker(line)}</span>
+                    <code>{line.text || " "}</code>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">No textual diff available.</p>
+            )}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+type ParsedFileChange = {
+  path: string;
+  movePath: string | null;
+  kind: string;
+  lines: DiffLine[];
+  stats: { added: number; removed: number };
+};
+
+type DiffLine = { kind: "hunk" | "add" | "remove" | "context" | "meta"; text: string };
+
+function parseFileChanges(value: unknown): ParsedFileChange[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(parseFileChange).filter((change): change is ParsedFileChange => Boolean(change));
+}
+
+function parseFileChange(value: unknown): ParsedFileChange | null {
+  const record = asRecord(value);
+  const pathValue = typeof record.path === "string" ? record.path : "";
+  if (!pathValue) {
+    return null;
+  }
+  const kindRecord = asRecord(record.kind);
+  const diffText = typeof record.diff === "string" ? record.diff : "";
+  const lines = parseDiffLines(diffText);
+  return {
+    path: pathValue,
+    movePath: typeof kindRecord.move_path === "string" ? kindRecord.move_path : null,
+    kind: typeof kindRecord.type === "string" ? kindRecord.type : String(record.status ?? "changed"),
+    lines,
+    stats: diffStats(lines)
+  };
+}
+
+function parseDiffLines(diffText: string): DiffLine[] {
+  return diffText.split("\n").filter((line, index, lines) => line || index < lines.length - 1).map((line) => {
+    if (line.startsWith("@@")) return { kind: "hunk", text: line };
+    if (line.startsWith("+++") || line.startsWith("---")) return { kind: "meta", text: line };
+    if (line.startsWith("+")) return { kind: "add", text: line.slice(1) };
+    if (line.startsWith("-")) return { kind: "remove", text: line.slice(1) };
+    return { kind: "context", text: line.startsWith(" ") ? line.slice(1) : line };
+  });
+}
+
+function diffStats(lines: DiffLine[]): { added: number; removed: number } {
+  return lines.reduce(
+    (current, line) => ({
+      added: current.added + (line.kind === "add" ? 1 : 0),
+      removed: current.removed + (line.kind === "remove" ? 1 : 0)
+    }),
+    { added: 0, removed: 0 }
+  );
+}
+
+function diffMarker(line: DiffLine): string {
+  if (line.kind === "add") return "+";
+  if (line.kind === "remove") return "-";
+  if (line.kind === "hunk") return "@";
+  return " ";
+}
+
+function displayDiffPath(pathValue: string): string {
+  const clean = stripLineSuffix(pathValue);
+  const homePrefix = "/home/uphill/";
+  return clean.startsWith(homePrefix) ? `~/${clean.slice(homePrefix.length)}` : clean;
 }
 
 const MarkdownText = memo(function MarkdownText({

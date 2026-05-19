@@ -781,6 +781,155 @@ textarea {
   color: #aebbc2;
 }
 
+.file-change-view {
+  display: grid;
+  gap: 12px;
+}
+
+.file-change-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.file-change-summary strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.file-change-list {
+  display: grid;
+  gap: 12px;
+}
+
+.file-diff-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.file-diff-header {
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px;
+  background: #f4f7f8;
+  border-bottom: 1px solid var(--line);
+}
+
+.file-diff-path {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  font-weight: 800;
+  text-align: left;
+}
+
+.file-diff-path span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-diff-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diff-stat {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.diff-stat.add {
+  background: #dff2e7;
+  color: var(--green);
+}
+
+.diff-stat.remove {
+  background: #f8e6e6;
+  color: var(--red);
+}
+
+.diff-block {
+  overflow: auto;
+  background: #fbfcfc;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  min-width: max-content;
+  border-left: 3px solid transparent;
+}
+
+.diff-line-marker {
+  color: #687982;
+  background: #eef3f4;
+  text-align: center;
+  user-select: none;
+}
+
+.diff-line code {
+  display: block;
+  padding: 0 10px;
+  white-space: pre;
+  color: #17242a;
+}
+
+.diff-line.add {
+  background: #edf8f1;
+  border-left-color: #2f8f54;
+}
+
+.diff-line.add .diff-line-marker {
+  color: #2f8f54;
+  background: #dff2e7;
+}
+
+.diff-line.remove {
+  background: #fff0f0;
+  border-left-color: #b33939;
+}
+
+.diff-line.remove .diff-line-marker {
+  color: #b33939;
+  background: #f8e6e6;
+}
+
+.diff-line.hunk {
+  background: #e9f0fb;
+  border-left-color: var(--blue);
+}
+
+.diff-line.hunk .diff-line-marker {
+  color: var(--blue);
+  background: #dfeafa;
+}
+
+.diff-line.hunk code,
+.diff-line.meta code {
+  color: #35638e;
+  font-weight: 750;
+}
+
 .markdown > *:first-child,
 .item-body > *:first-child {
   margin-top: 0;
