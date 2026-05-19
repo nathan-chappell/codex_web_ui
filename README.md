@@ -19,14 +19,15 @@ The server is always protected by either Clerk or password auth. Set a strong
 with neither configured, the password login remains locked and API routes stay
 unauthorized.
 
-For development, run the backend and Vite:
+For development, run the backend, Vite, and a sibling Codex app-server process:
 
 ```bash
 CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev
 ```
 
-By default, the backend owns a stdio `codex app-server` process. It uses the
-same Codex data in `~/.codex`, including persisted sessions.
+In dev mode, the backend connects to Codex through `codex app-server proxy`
+using `CODEX_APP_SERVER_SOCKET` instead of owning the app-server directly. That
+lets backend watch restarts reconnect without terminating active Codex work.
 
 For an ngrok-facing local watch mode without Vite, rebuild the frontend on
 change and restart the backend on server changes:
@@ -35,14 +36,16 @@ change and restart the backend on server changes:
 CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 PORT=4545 npm run watch
 ```
 
-This serves the rebuilt frontend from `dist/public` and uses the same backend
-runtime as `npm start`.
+This serves the rebuilt frontend from `dist/public`, keeps a sibling
+`codex app-server` process running, and reconnects the backend through the
+socket proxy after backend restarts.
 
-Socket mode is available, but opt-in:
+You can also run the pieces manually:
 
 ```bash
 CODEX_APP_SERVER_SOCKET=./tmp/codex-app-server.sock npm run codex:app-server
 CODEX_APP_SERVER_SOCKET=./tmp/codex-app-server.sock CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev:api
+npm run dev:client
 ```
 
 To expose the running server through ngrok:
