@@ -171,6 +171,9 @@ export default function App() {
     () => Array.from({ length: threadPaneCount }, (_, index) => openThreadIds[index] ?? null),
     [openThreadIds, threadPaneCount]
   );
+  const activeThreadId = paneThreadIds[activePaneIndex] ?? null;
+  const activeThread = activeThreadId ? openThreads[activeThreadId] ?? selectedThread : null;
+  const topbarContext = topbarContextText(serverStatus, activeThreadId, activeThread);
   const selectionActive = selectedSessionIds.size > 0;
   useEffect(() => {
     const nextOpenThreadIds = Array.from({ length: threadPaneCount }, (_, index) => openThreadIdsRef.current[index] ?? null);
@@ -231,7 +234,7 @@ export default function App() {
           <div className="mark">CX</div>
           <div>
             <strong>Codex Web UI</strong>
-            <span>{serverStatus.error || `${serverStatus.command ?? "codex"} in ${serverStatus.cwd ?? ""}`}</span>
+            <span>{topbarContext}</span>
             {authInfo?.warning && <span className="auth-warning-text">{authInfo.warning}</span>}
           </div>
         </div>
@@ -2190,6 +2193,19 @@ function projectNameForThread(thread: Thread): string {
     return parts.at(-1) || thread.cwd;
   }
   return titleForThread(thread);
+}
+
+function topbarContextText(serverStatus: ServerStatus, activeThreadId: string | null, activeThread: Thread | null): string {
+  if (serverStatus.error) {
+    return serverStatus.error;
+  }
+  if (activeThread) {
+    return activeThread.cwd ? `Thread in ${activeThread.cwd}` : `Thread ${shortId(activeThread.id)}`;
+  }
+  if (activeThreadId) {
+    return `Loading thread ${shortId(activeThreadId)}`;
+  }
+  return `App server in ${serverStatus.cwd ?? ""}`;
 }
 
 function mostRecentThreadsByFolder(threads: Thread[]): Thread[] {
