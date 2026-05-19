@@ -3,30 +3,24 @@ import {
   ChevronUp,
   ChevronsDown,
   FileDiff,
-  FileText,
   Folder,
   FolderGit2,
   GitFork,
   Home,
-  LogOut,
   MessageSquarePlus,
   Minimize2,
   Paperclip,
   PauseCircle,
   Plus,
   RefreshCw,
-  Search,
   Send,
   Trash2,
   X
 } from "lucide-react";
-import { SignInButton, SignUpButton, UserButton, useAuth, useClerk } from "@clerk/react";
 import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
   browseFiles,
   browseRepositories,
@@ -40,13 +34,13 @@ import {
   openEventStream,
   readReferencedFile,
   referencedFileDownloadUrl,
-  referencedFileRawUrl,
   restartServer,
   rpc,
   uploadAttachment
 } from "./api";
-import type { AuthState, FileExplorer, FileExplorerEntry, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
-import { CLERK_PUBLISHABLE_KEY } from "./authConfig";
+import { ClerkLoginPanel, LogoutButton } from "./authControls";
+import { FileExplorerModal, FileReferenceBar, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
+import type { AuthState, FileExplorer, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
 
 const defaultSettings: UiSettings = {
   cwd: "",
@@ -96,6 +90,7 @@ export default function App() {
   const [rateLimits, setRateLimits] = useState<RateLimitSnapshot | null>(null);
   const [filePreviewCache, setFilePreviewCache] = useState<Record<string, FilePreview>>({});
   const [fileViewer, setFileViewer] = useState<{ reference: FileReference; file: FilePreview } | null>(null);
+  const [fileViewerLoading, setFileViewerLoading] = useState<FileReference | null>(null);
   const [fileExplorerOpen, setFileExplorerOpen] = useState(false);
   const [fileExplorer, setFileExplorer] = useState<FileExplorer | null>(null);
   const [fileExplorerCache, setFileExplorerCache] = useState<Record<string, FileExplorer>>({});
@@ -108,6 +103,7 @@ export default function App() {
   const sessionsLoadSeqRef = useRef(0);
   const threadLoadSeqRef = useRef(0);
   const fileExplorerLoadSeqRef = useRef(0);
+  const filePreviewLoadSeqRef = useRef(0);
   const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
   const activePaneIndexRef = useRef(0);
   const openThreadIdsRef = useRef<(string | null)[]>([null]);
@@ -487,6 +483,15 @@ export default function App() {
           onClose={() => setFileViewer(null)}
         />
       )}
+      {fileViewerLoading && (
+        <FileViewerLoadingModal
+          reference={fileViewerLoading}
+          onClose={() => {
+            filePreviewLoadSeqRef.current += 1;
+            setFileViewerLoading(null);
+          }}
+        />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </main>
   );
@@ -575,19 +580,37 @@ export default function App() {
 
   async function openFileReference(reference: FileReference) {
     const key = fileReferenceKey(reference);
-    try {
-      const cached = filePreviewCache[key];
-      const file = cached ?? await readReferencedFile(reference);
-      if (!cached) {
-        setFilePreviewCache((current) => ({ ...current, [key]: file }));
-      }
-      if (!file.previewable) {
+    const cached = filePreviewCache[key];
+    if (cached) {
+      setFileViewerLoading(null);
+      if (!cached.previewable) {
         window.location.assign(referencedFileDownloadUrl(reference));
         return;
       }
+      setFileViewer({ reference, file: cached });
+      return;
+    }
+    const loadId = ++filePreviewLoadSeqRef.current;
+    setFileViewer(null);
+    setFileViewerLoading(reference);
+    try {
+      const file = await readReferencedFile(reference);
+      if (loadId !== filePreviewLoadSeqRef.current) {
+        return;
+      }
+      setFilePreviewCache((current) => ({ ...current, [key]: file }));
+      if (!file.previewable) {
+        setFileViewerLoading(null);
+        window.location.assign(referencedFileDownloadUrl(reference));
+        return;
+      }
+      setFileViewerLoading(null);
       setFileViewer({ reference, file });
     } catch (error) {
-      showToast(error);
+      if (loadId === filePreviewLoadSeqRef.current) {
+        setFileViewerLoading(null);
+        showToast(error);
+      }
     }
   }
 
@@ -1367,109 +1390,6 @@ const ThreadPane = memo(function ThreadPane({
   );
 });
 
-function ClerkLoginPanel({
-  error,
-  onAuthenticated,
-  onError
-}: {
-  error: string;
-  onAuthenticated: () => Promise<void>;
-  onError: (error: string) => void;
-}) {
-  if (!CLERK_PUBLISHABLE_KEY) {
-    return (
-      <div className="login-panel auth-error-panel">
-        <div>
-          <p className="eyebrow">Clerk auth</p>
-          <h1>Missing publishable key</h1>
-        </div>
-        <p className="error-text">Set VITE_CLERK_PUBLISHABLE_KEY for the client when Clerk auth is enabled on the server.</p>
-      </div>
-    );
-  }
-  return <ClerkLoginPanelInner error={error} onAuthenticated={onAuthenticated} onError={onError} />;
-}
-
-function ClerkLoginPanelInner({
-  error,
-  onAuthenticated,
-  onError
-}: {
-  error: string;
-  onAuthenticated: () => Promise<void>;
-  onError: (error: string) => void;
-}) {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
-  const exchangeInFlightRef = useRef(false);
-
-  useEffect(() => {
-    if (!isLoaded || !isSignedIn || exchangeInFlightRef.current) {
-      return;
-    }
-    exchangeInFlightRef.current = true;
-    onError("");
-    getToken()
-      .then((token) => {
-        if (!token) {
-          throw new Error("Clerk did not return a session token.");
-        }
-        return createClerkSession(token);
-      })
-      .then(onAuthenticated)
-      .catch((err) => {
-        exchangeInFlightRef.current = false;
-        onError(messageFromError(err));
-      });
-  }, [getToken, isLoaded, isSignedIn, onAuthenticated, onError]);
-
-  return (
-    <div className="login-panel">
-      <div>
-        <p className="eyebrow">Clerk OAuth</p>
-        <h1>Codex Web UI</h1>
-      </div>
-      <p className="muted">Sign in with Clerk. Access is allowed only for users with active Clerk metadata.</p>
-      <div className="clerk-login-actions">
-        <SignInButton mode="modal">
-          <button className="primary-button" type="button">Sign in</button>
-        </SignInButton>
-        <SignUpButton mode="modal">
-          <button className="secondary-button" type="button">Register</button>
-        </SignUpButton>
-        {isSignedIn && <UserButton />}
-      </div>
-      <p className="error-text">{error || (isSignedIn ? "Checking account access..." : "")}</p>
-    </div>
-  );
-}
-
-function LogoutButton({ authMode, onLogout }: { authMode: AuthState["mode"]; onLogout: () => Promise<void> }) {
-  if (authMode === "clerk" && CLERK_PUBLISHABLE_KEY) {
-    return <ClerkLogoutButton onLogout={onLogout} />;
-  }
-  return (
-    <button className="ghost-button" type="button" onClick={onLogout}>
-      <LogOut size={16} /> Logout
-    </button>
-  );
-}
-
-function ClerkLogoutButton({ onLogout }: { onLogout: () => Promise<void> }) {
-  const { signOut } = useClerk();
-  return (
-    <button
-      className="ghost-button"
-      type="button"
-      onClick={async () => {
-        await onLogout();
-        await signOut();
-      }}
-    >
-      <LogOut size={16} /> Logout
-    </button>
-  );
-}
-
 function StatusModal({
   rateLimits,
   status,
@@ -1529,184 +1449,6 @@ function UsageStatusSummary({ compact = false, rateLimits }: { compact?: boolean
 
 function QuotaMetric({ value }: { value: number | null }) {
   return <span className={`usage-metric ${quotaMetricClass(value)}`}>{formatPercentValue(value)}</span>;
-}
-
-function FileReferenceBar({ references, onOpenFile }: { references: FileReference[]; onOpenFile: (reference: FileReference) => Promise<void> }) {
-  if (references.length === 0) {
-    return null;
-  }
-  return (
-    <div className="file-reference-bar" aria-label="Referenced files">
-      {references.slice(0, 16).map((reference) => (
-        <button
-          key={fileReferenceKey(reference)}
-          type="button"
-          onClick={() => void onOpenFile(reference)}
-          title={reference.path}
-        >
-          <Paperclip size={14} />
-          <span>{reference.label || reference.path}</span>
-        </button>
-      ))}
-      {references.length > 16 && <span className="muted">+{references.length - 16} more</span>}
-    </div>
-  );
-}
-
-function FileExplorerModal({
-  explorer,
-  loading,
-  onBrowse,
-  onClose,
-  onOpenFile,
-  onRefresh
-}: {
-  explorer: FileExplorer | null;
-  loading: boolean;
-  onBrowse: (pathValue: string) => void;
-  onClose: () => void;
-  onOpenFile: (entry: FileExplorerEntry) => Promise<void>;
-  onRefresh: () => void;
-}) {
-  const [filter, setFilter] = useState("");
-  const visibleEntries = useMemo(() => {
-    const normalized = filter.trim().toLowerCase();
-    const entries = explorer?.entries ?? [];
-    if (!normalized) {
-      return entries;
-    }
-    return entries.filter((entry) => `${entry.name}\n${entry.relativePath}\n${entry.kind || ""}`.toLowerCase().includes(normalized));
-  }, [explorer, filter]);
-
-  return (
-    <div className="modal-backdrop">
-      <section className="modal file-explorer-modal" role="dialog" aria-modal="true" aria-labelledby="file-explorer-title">
-        <header className="modal-header">
-          <div className="file-viewer-title">
-            <h2 id="file-explorer-title">Files</h2>
-            <p className="muted">{explorer?.displayPath || "Loading project files"}</p>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} title="Close">
-            <X size={16} />
-          </button>
-        </header>
-        <div className="file-explorer-toolbar">
-          <label className="file-search-field">
-            <Search size={15} />
-            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter files" />
-          </label>
-          <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} title="Refresh files" aria-label="Refresh files">
-            <RefreshCw size={16} />
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            disabled={!explorer?.parentPath}
-            onClick={() => explorer?.parentPath && onBrowse(explorer.parentPath)}
-            title="Parent directory"
-            aria-label="Parent directory"
-          >
-            <ChevronUp size={17} />
-          </button>
-        </div>
-        {explorer && (
-          <div className="file-explorer-summary">
-            <span>{explorer.entries.length} entries</span>
-            <span>{explorer.trackedCount} tracked</span>
-            {explorer.relativePath && <span>{explorer.relativePath}</span>}
-          </div>
-        )}
-        <div className="file-explorer-list">
-          {!explorer ? (
-            <p className="muted empty-pad">Loading files</p>
-          ) : visibleEntries.length === 0 ? (
-            <p className="muted empty-pad">No files found.</p>
-          ) : (
-            visibleEntries.map((entry) => (
-              <button
-                className="file-explorer-row"
-                key={`${entry.type}:${entry.path}`}
-                type="button"
-                onClick={() => entry.type === "directory" ? onBrowse(entry.path) : void onOpenFile(entry)}
-                title={entry.displayPath}
-              >
-                <span className={`file-explorer-icon ${entry.type}`}>
-                  {entry.type === "directory" ? <Folder size={18} /> : <FileText size={18} />}
-                </span>
-                <span className="file-explorer-main">
-                  <strong>{entry.name}</strong>
-                  <span>{entry.relativePath || entry.displayPath}</span>
-                </span>
-                <span className="file-explorer-meta">
-                  {entry.tracked && <span className="file-tracked-badge">git</span>}
-                  {entry.type === "file" && <span>{formatFileSize(entry.size ?? 0)}</span>}
-                  {entry.kind && <span>{entry.kind}</span>}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function FileViewerModal({ file, reference, onClose }: { file: FilePreview; reference: FileReference; onClose: () => void }) {
-  return (
-    <div className="modal-backdrop">
-      <section className="modal file-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="file-viewer-title">
-        <header className="modal-header">
-          <div className="file-viewer-title">
-            <h2 id="file-viewer-title">{file.name}</h2>
-            <p className="muted">{file.displayPath} | {formatFileSize(file.size)}</p>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} title="Close">
-            <X size={16} />
-          </button>
-        </header>
-        <div className="file-viewer-body">
-          {renderFilePreview(file, reference)}
-        </div>
-        <footer className="modal-actions">
-          <a className="ghost-button" href={referencedFileDownloadUrl(reference)}>
-            Download
-          </a>
-          <button className="primary-button" type="button" onClick={onClose}>Done</button>
-        </footer>
-      </section>
-    </div>
-  );
-}
-
-function renderFilePreview(file: FilePreview, reference: FileReference) {
-  const content = file.content ?? "";
-  if (file.kind === "image") {
-    return <img className="file-image-preview" src={referencedFileRawUrl(reference)} alt={file.name} />;
-  }
-  if (file.kind === "pdf") {
-    return <iframe className="file-pdf-preview" src={referencedFileRawUrl(reference)} title={file.name} />;
-  }
-  if (file.kind === "video") {
-    return <video className="file-video-preview" src={referencedFileRawUrl(reference)} controls playsInline preload="metadata" />;
-  }
-  if (file.kind === "json") {
-    return <pre className="json-block file-preview-block">{prettyJson(content)}</pre>;
-  }
-  if (file.kind === "markdown") {
-    return (
-      <div className="markdown file-markdown-preview">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-      </div>
-    );
-  }
-  if (file.kind === "code") {
-    return (
-      <SyntaxHighlighter language={languageForFile(file)} style={oneLight} customStyle={{ margin: 0, borderRadius: 6 }}>
-        {content}
-      </SyntaxHighlighter>
-    );
-  }
-  return <pre className="code-block file-preview-block">{content}</pre>;
 }
 
 const TurnHistory = memo(function TurnHistory({
@@ -1773,8 +1515,8 @@ const TurnHistory = memo(function TurnHistory({
         <section className="turn-block" key={turn.id}>
           <div className="turn-heading">
             <StatusBadge value={turn.status} />
-            <span>{turn.id}</span>
-            <span>{formatDate(turn.startedAt)}</span>
+            <span className="turn-id">{turn.id}</span>
+            <span className="turn-date">{formatDate(turn.startedAt)}</span>
           </div>
           {items.map((item) => <ThreadItemView cwd={cwd} item={item} key={item.id} onOpenFile={onOpenFile} />)}
         </section>
@@ -2273,7 +2015,7 @@ function EditableThreadTitle({ thread, onRename }: { thread: Thread; onRename: (
 
 const StatusBadge = memo(function StatusBadge({ value }: { value: string | undefined | null }) {
   const text = value || "unknown";
-  return <span className={`status-badge ${statusClass(text)}`}>{text}</span>;
+  return <span className={`status-badge ${statusClass(text)}`}>{statusLabel(text)}</span>;
 });
 
 const ThreadUsageStats = memo(function ThreadUsageStats({ rateLimits }: { rateLimits: RateLimitSnapshot | null }) {
@@ -2424,6 +2166,17 @@ function statusClass(status: string): string {
   if (["failed", "error", "systemError", "exited", "disconnected", "stderr"].includes(status)) return "bad";
   if (["notLoaded", "interrupted", "stdout"].includes(status)) return "info";
   return "neutral";
+}
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    inProgress: "in progress",
+    waitingOnApproval: "waiting approval",
+    waitingOnUserInput: "waiting input",
+    notLoaded: "not loaded",
+    systemError: "system error"
+  };
+  return labels[status] || status;
 }
 
 function titleForThread(thread: Thread): string {
@@ -2628,39 +2381,6 @@ function markdownChildrenText(value: ReactNode): string {
     return value.map(markdownChildrenText).join("");
   }
   return "";
-}
-
-function prettyJson(content: string): string {
-  try {
-    return JSON.stringify(JSON.parse(content), null, 2);
-  } catch {
-    return content;
-  }
-}
-
-function languageForFile(file: FilePreview): string {
-  const map: Record<string, string> = {
-    js: "javascript",
-    jsx: "jsx",
-    ts: "typescript",
-    tsx: "tsx",
-    py: "python",
-    rs: "rust",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    yml: "yaml",
-    yaml: "yaml",
-    md: "markdown",
-    markdown: "markdown"
-  };
-  return map[file.extension] || file.extension || "text";
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function isWithinHorizontalScroller(target: EventTarget | null, stopAt: Element): boolean {
