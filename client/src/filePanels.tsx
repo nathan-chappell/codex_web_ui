@@ -1,4 +1,4 @@
-import { ChevronUp, FileText, Folder, Paperclip, RefreshCw, Search, X } from "lucide-react";
+import { ChevronUp, FileText, Folder, RefreshCw, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,28 +6,6 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { referencedFileDownloadUrl, referencedFileRawUrl } from "./api";
 import type { FileExplorer, FileExplorerEntry, FilePreview, FileReference } from "./types";
-
-export function FileReferenceBar({ references, onOpenFile }: { references: FileReference[]; onOpenFile: (reference: FileReference) => Promise<void> }) {
-  if (references.length === 0) {
-    return null;
-  }
-  return (
-    <div className="file-reference-bar" aria-label="Referenced files">
-      {references.slice(0, 16).map((reference) => (
-        <button
-          key={`${reference.cwd || ""}\n${reference.path}`}
-          type="button"
-          onClick={() => void onOpenFile(reference)}
-          title={reference.path}
-        >
-          <Paperclip size={14} />
-          <span>{reference.label || reference.path}</span>
-        </button>
-      ))}
-      {references.length > 16 && <span className="muted">+{references.length - 16} more</span>}
-    </div>
-  );
-}
 
 export function FileExplorerModal({
   explorer,

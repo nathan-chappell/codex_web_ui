@@ -39,7 +39,7 @@ import {
   uploadAttachment
 } from "./api";
 import { ClerkLoginPanel, LogoutButton } from "./authControls";
-import { FileExplorerModal, FileReferenceBar, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
+import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
 import type { AuthState, FileExplorer, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
 
 const defaultSettings: UiSettings = {
@@ -1242,7 +1242,6 @@ const ThreadPane = memo(function ThreadPane({
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
   const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [thread?.turns]);
-  const fileReferences = useMemo(() => thread ? extractFileReferences(thread) : [], [thread]);
 
   useEffect(() => {
     if (!thread) {
@@ -1361,7 +1360,6 @@ const ThreadPane = memo(function ThreadPane({
       </header>
       {thread ? (
         <>
-          <FileReferenceBar references={fileReferences} onOpenFile={onOpenFile} />
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             <TurnHistory
               cwd={thread.cwd || null}
@@ -2097,67 +2095,67 @@ const Composer = memo(function Composer({
     }
   }
 
-  if (collapsed) {
-    return (
-      <div className="composer collapsed">
+  return (
+    <form
+      className={`composer ${collapsed ? "collapsed" : ""}`}
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (collapsed) {
+          return;
+        }
+        await submitDraft("send");
+      }}
+    >
+      <div className="composer-collapsed-action">
         <button className="primary-button" type="button" onClick={() => onCollapsedChange(false)}>
           <Send size={16} /> Compose
         </button>
       </div>
-    );
-  }
-
-  return (
-    <form
-      className="composer"
-      onSubmit={async (event) => {
-        event.preventDefault();
-        await submitDraft("send");
-      }}
-    >
-      <div className="composer-top">
-        <button className="icon-button" type="button" onClick={() => onCollapsedChange(true)} title="Collapse composer" aria-label="Collapse composer">
-          <ChevronsDown size={17} />
-        </button>
-        <button className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} title="Interrupt" aria-label="Interrupt">
-          <PauseCircle size={17} />
-        </button>
-        <button className="icon-button" type="button" onClick={onFork} title="Fork thread" aria-label="Fork thread">
-          <GitFork size={17} />
-        </button>
-        <button className="icon-button" type="button" onClick={onCompact} title="Compact thread" aria-label="Compact thread">
-          <Minimize2 size={17} />
-        </button>
-      </div>
-      <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} placeholder="Send a new message or steer the active turn" />
-      <div className="composer-bottom">
-        <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
-        <div className="composer-actions">
-          <input
-            className="file-input"
-            ref={fileInputRef}
-            type="file"
-            onChange={(event) => void handleAttachmentFile(event.currentTarget.files?.[0])}
-          />
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            title="Attach file"
-            aria-label="Attach file"
-          >
-            <Paperclip size={17} />
+      <div className="composer-expanded">
+        <div className="composer-top">
+          <button className="icon-button" type="button" onClick={() => onCollapsedChange(true)} title="Collapse composer" aria-label="Collapse composer">
+            <ChevronsDown size={17} />
           </button>
-          <button className={activeTurnId ? "queue-button" : "primary-button"} type="submit">
-            <Send size={16} /> {activeTurnId ? "Enqueue" : "Send"}
+          <button className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} title="Interrupt" aria-label="Interrupt">
+            <PauseCircle size={17} />
           </button>
-          <button className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId}>
-            <Send size={16} /> Steer
+          <button className="icon-button" type="button" onClick={onFork} title="Fork thread" aria-label="Fork thread">
+            <GitFork size={17} />
           </button>
-          <button className="ghost-button" type="button" onClick={onArchive}>
-            <Archive size={16} /> {archiveLabel}
+          <button className="icon-button" type="button" onClick={onCompact} title="Compact thread" aria-label="Compact thread">
+            <Minimize2 size={17} />
           </button>
+        </div>
+        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} placeholder="Send a new message or steer the active turn" />
+        <div className="composer-bottom">
+          <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
+          <div className="composer-actions">
+            <input
+              className="file-input"
+              ref={fileInputRef}
+              type="file"
+              onChange={(event) => void handleAttachmentFile(event.currentTarget.files?.[0])}
+            />
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              title="Attach file"
+              aria-label="Attach file"
+            >
+              <Paperclip size={17} />
+            </button>
+            <button className={activeTurnId ? "queue-button" : "primary-button"} type="submit">
+              <Send size={16} /> {activeTurnId ? "Enqueue" : "Send"}
+            </button>
+            <button className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId}>
+              <Send size={16} /> Steer
+            </button>
+            <button className="ghost-button" type="button" onClick={onArchive}>
+              <Archive size={16} /> {archiveLabel}
+            </button>
+          </div>
         </div>
       </div>
     </form>
@@ -2247,57 +2245,6 @@ function lastMessagePreview(thread: Thread): string {
   return thread.preview || "";
 }
 
-function extractFileReferences(thread: Thread): FileReference[] {
-  const references = new Map<string, FileReference>();
-  const cwd = thread.cwd || null;
-  for (const turn of thread.turns ?? []) {
-    for (const item of turn.items ?? []) {
-      for (const pathValue of pathsFromItem(item)) {
-        addFileReference(references, { path: pathValue, cwd, label: labelForPath(pathValue) });
-      }
-    }
-  }
-  return [...references.values()];
-}
-
-function pathsFromItem(item: ThreadItem): string[] {
-  const paths: string[] = [];
-  if (item.type === "userMessage") {
-    paths.push(...extractPathCandidates(userInputText(item.content)));
-  }
-  if (typeof item.text === "string") {
-    paths.push(...extractPathCandidates(item.text));
-  }
-  if (typeof item.path === "string") {
-    paths.push(item.path);
-  }
-  if (typeof item.aggregatedOutput === "string") {
-    paths.push(...extractPathCandidates(item.aggregatedOutput));
-  }
-  const changes = item.changes;
-  if (Array.isArray(changes)) {
-    for (const change of changes) {
-      const record = asRecord(change);
-      if (typeof record.path === "string") {
-        paths.push(record.path);
-      }
-    }
-  }
-  return uniqueFilePaths(paths);
-}
-
-function extractPathCandidates(text: string): string[] {
-  const matches: string[] = [];
-  const pattern = /(?:^|[\s`"'(\[])([~./A-Za-z0-9_-][^\s`"'<>)]{0,240}\.(?:json|md|markdown|mdx|py|tsx?|jsx?|css|scss|html|yaml|yml|toml|txt|log|csv|rs|go|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|bash|zsh|fish|sql|xml|vue|svelte|png|jpe?g|gif|webp|bmp|avif|svg|pdf|mp4|m4v|webm|mov|ogv|ogg|avi|mkv|3gp|docx?|xlsx?|pptx?)(?::\d+(?::\d+)?)?)/gi;
-  for (const match of text.matchAll(pattern)) {
-    const pathValue = cleanFileReferencePath(match[1] || "");
-    if (pathValue && looksLikeFileReference(pathValue)) {
-      matches.push(pathValue);
-    }
-  }
-  return uniqueFilePaths(matches);
-}
-
 function linkifyFileReferences(text: string): string {
   const pattern = /(^|[\s"'])([~./A-Za-z0-9_-][^\s`"'<>)]{0,240}\.(?:json|md|markdown|mdx|py|tsx?|jsx?|css|scss|html|yaml|yml|toml|txt|log|csv|rs|go|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|bash|zsh|fish|sql|xml|vue|svelte|png|jpe?g|gif|webp|bmp|avif|svg|pdf|mp4|m4v|webm|mov|ogv|ogg|avi|mkv|3gp|docx?|xlsx?|pptx?)(?::\d+(?::\d+)?)?)/gi;
   let inFence = false;
@@ -2324,19 +2271,8 @@ function linkifyFileReferences(text: string): string {
   }).join("\n");
 }
 
-function uniqueFilePaths(paths: string[]): string[] {
-  return [...new Set(paths.map(cleanFileReferencePath).filter((pathValue) => pathValue && looksLikeFileReference(pathValue)))];
-}
-
 function cleanFileReferencePath(value: string): string {
   return stripLineSuffix(value.trim().replace(/[.,;:!?]+$/g, ""));
-}
-
-function addFileReference(references: Map<string, FileReference>, reference: FileReference): void {
-  const key = fileReferenceKey(reference);
-  if (!references.has(key)) {
-    references.set(key, reference);
-  }
 }
 
 function fileReferenceKey(reference: FileReference): string {
