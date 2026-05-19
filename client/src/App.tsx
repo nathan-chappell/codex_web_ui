@@ -56,6 +56,7 @@ type ThreadPaneCount = 1 | 2 | 4;
 
 const THREAD_ITEM_BATCH_SIZE = 20;
 const SESSION_PAGE_SIZE = 50;
+const ACCOUNT_RATE_LIMIT_ID = "codex";
 const mobilePanes: MobilePane[] = ["sessions", "thread"];
 
 export default function App() {
@@ -674,7 +675,7 @@ export default function App() {
         setRateLimits(parsed);
       }
     } catch {
-      setRateLimits(null);
+      setRateLimits((current) => current);
     }
   }
 
@@ -1093,7 +1094,7 @@ export default function App() {
       setSelectedThread((current) => (current?.id === threadId ? { ...current, status: status as Thread["status"] } : current));
     }
     if (method === "account/rateLimits/updated") {
-      const nextRateLimits = parseRateLimitSnapshot(params.rateLimits);
+      const nextRateLimits = parseRateLimitsUpdate(params);
       if (nextRateLimits) {
         setRateLimits(nextRateLimits);
       }
@@ -2476,8 +2477,25 @@ function asRecord(value: unknown): Record<string, unknown> {
 function parseRateLimitsResponse(value: unknown): RateLimitSnapshot | null {
   const record = asRecord(value);
   const byLimitId = asRecord(record.rateLimitsByLimitId);
-  const codex = parseRateLimitSnapshot(byLimitId.codex);
+  const codex = parseRateLimitSnapshot(byLimitId[ACCOUNT_RATE_LIMIT_ID]);
   return codex ?? parseRateLimitSnapshot(record.rateLimits);
+}
+
+function parseRateLimitsUpdate(value: unknown): RateLimitSnapshot | null {
+  const record = asRecord(value);
+  const fromResponseShape = parseRateLimitsResponse(record);
+  if (fromResponseShape?.limitId === ACCOUNT_RATE_LIMIT_ID) {
+    return fromResponseShape;
+  }
+  const direct = parseRateLimitSnapshot(record.rateLimits);
+  if (direct?.limitId === ACCOUNT_RATE_LIMIT_ID) {
+    return direct;
+  }
+  const inline = parseRateLimitSnapshot(record);
+  if (inline?.limitId === ACCOUNT_RATE_LIMIT_ID) {
+    return inline;
+  }
+  return null;
 }
 
 function parseRateLimitSnapshot(value: unknown): RateLimitSnapshot | null {
