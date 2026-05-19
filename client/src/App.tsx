@@ -3,6 +3,7 @@ import {
   ChevronUp,
   ChevronsDown,
   FileDiff,
+  FileText,
   Folder,
   FolderGit2,
   GitFork,
@@ -14,6 +15,7 @@ import {
   PauseCircle,
   Plus,
   RefreshCw,
+  Search,
   Send,
   Trash2,
   X
@@ -26,6 +28,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
+  browseFiles,
   browseRepositories,
   createClerkSession,
   createRepository,
@@ -42,7 +45,7 @@ import {
   rpc,
   uploadAttachment
 } from "./api";
-import type { AuthState, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
+import type { AuthState, FileExplorer, FileExplorerEntry, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
 import { CLERK_PUBLISHABLE_KEY } from "./authConfig";
 
 const defaultSettings: UiSettings = {
@@ -93,6 +96,10 @@ export default function App() {
   const [rateLimits, setRateLimits] = useState<RateLimitSnapshot | null>(null);
   const [filePreviewCache, setFilePreviewCache] = useState<Record<string, FilePreview>>({});
   const [fileViewer, setFileViewer] = useState<{ reference: FileReference; file: FilePreview } | null>(null);
+  const [fileExplorerOpen, setFileExplorerOpen] = useState(false);
+  const [fileExplorer, setFileExplorer] = useState<FileExplorer | null>(null);
+  const [fileExplorerCache, setFileExplorerCache] = useState<Record<string, FileExplorer>>({});
+  const [fileExplorerLoading, setFileExplorerLoading] = useState(false);
   const [loadingThreadByPane, setLoadingThreadByPane] = useState<Record<number, string>>({});
 
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -100,6 +107,7 @@ export default function App() {
   const listTimerRef = useRef<number | null>(null);
   const sessionsLoadSeqRef = useRef(0);
   const threadLoadSeqRef = useRef(0);
+  const fileExplorerLoadSeqRef = useRef(0);
   const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
   const activePaneIndexRef = useRef(0);
   const openThreadIdsRef = useRef<(string | null)[]>([null]);
@@ -233,6 +241,9 @@ export default function App() {
         <div className="top-actions">
           <button className="status-button" type="button" onClick={() => setStatusOpen(true)} title="Show app server status">
             <UsageStatusSummary rateLimits={rateLimits} compact />
+          </button>
+          <button className="ghost-button" type="button" onClick={() => void openFileExplorer()} title="Browse files">
+            <Folder size={16} /> Files
           </button>
           <button className="ghost-button" type="button" onClick={handleRestart}>
             <RefreshCw size={16} /> Reconnect
@@ -459,6 +470,16 @@ export default function App() {
           onRefresh={refreshStatus}
         />
       )}
+      {fileExplorerOpen && (
+        <FileExplorerModal
+          explorer={fileExplorer}
+          loading={fileExplorerLoading}
+          onBrowse={(pathValue) => void loadFileExplorer(fileExplorer?.cwd || defaultFileExplorerCwd(), pathValue)}
+          onClose={() => setFileExplorerOpen(false)}
+          onOpenFile={(entry) => fileExplorer ? openFileReference({ path: entry.path, cwd: fileExplorer.cwd, label: entry.name }) : Promise.resolve()}
+          onRefresh={() => fileExplorer ? void loadFileExplorer(fileExplorer.cwd, fileExplorer.path, true) : void openFileExplorer()}
+        />
+      )}
       {fileViewer && (
         <FileViewerModal
           file={fileViewer.file}
@@ -509,6 +530,46 @@ export default function App() {
       await loadRateLimits();
     } catch (error) {
       showToast(error);
+    }
+  }
+
+  function defaultFileExplorerCwd(): string {
+    return selectedThread?.cwd || settings.cwd || serverStatus.cwd || "";
+  }
+
+  function fileExplorerCacheKey(cwd: string, pathValue?: string | null): string {
+    return `${cwd}\n${pathValue || ""}`;
+  }
+
+  async function openFileExplorer() {
+    setFileExplorerOpen(true);
+    await loadFileExplorer(defaultFileExplorerCwd());
+  }
+
+  async function loadFileExplorer(cwd: string, pathValue?: string | null, force = false) {
+    const key = fileExplorerCacheKey(cwd, pathValue);
+    const cached = fileExplorerCache[key];
+    if (cached && !force) {
+      fileExplorerLoadSeqRef.current += 1;
+      setFileExplorer(cached);
+      setFileExplorerLoading(false);
+      return;
+    }
+    const loadId = ++fileExplorerLoadSeqRef.current;
+    setFileExplorerLoading(true);
+    try {
+      const explorer = await browseFiles({ cwd, path: pathValue });
+      if (loadId !== fileExplorerLoadSeqRef.current) {
+        return;
+      }
+      setFileExplorer(explorer);
+      setFileExplorerCache((current) => ({ ...current, [key]: explorer }));
+    } catch (error) {
+      showToast(error);
+    } finally {
+      if (loadId === fileExplorerLoadSeqRef.current) {
+        setFileExplorerLoading(false);
+      }
     }
   }
 
@@ -1488,6 +1549,104 @@ function FileReferenceBar({ references, onOpenFile }: { references: FileReferenc
         </button>
       ))}
       {references.length > 16 && <span className="muted">+{references.length - 16} more</span>}
+    </div>
+  );
+}
+
+function FileExplorerModal({
+  explorer,
+  loading,
+  onBrowse,
+  onClose,
+  onOpenFile,
+  onRefresh
+}: {
+  explorer: FileExplorer | null;
+  loading: boolean;
+  onBrowse: (pathValue: string) => void;
+  onClose: () => void;
+  onOpenFile: (entry: FileExplorerEntry) => Promise<void>;
+  onRefresh: () => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const visibleEntries = useMemo(() => {
+    const normalized = filter.trim().toLowerCase();
+    const entries = explorer?.entries ?? [];
+    if (!normalized) {
+      return entries;
+    }
+    return entries.filter((entry) => `${entry.name}\n${entry.relativePath}\n${entry.kind || ""}`.toLowerCase().includes(normalized));
+  }, [explorer, filter]);
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modal file-explorer-modal" role="dialog" aria-modal="true" aria-labelledby="file-explorer-title">
+        <header className="modal-header">
+          <div className="file-viewer-title">
+            <h2 id="file-explorer-title">Files</h2>
+            <p className="muted">{explorer?.displayPath || "Loading project files"}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="file-explorer-toolbar">
+          <label className="file-search-field">
+            <Search size={15} />
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter files" />
+          </label>
+          <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} title="Refresh files" aria-label="Refresh files">
+            <RefreshCw size={16} />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            disabled={!explorer?.parentPath}
+            onClick={() => explorer?.parentPath && onBrowse(explorer.parentPath)}
+            title="Parent directory"
+            aria-label="Parent directory"
+          >
+            <ChevronUp size={17} />
+          </button>
+        </div>
+        {explorer && (
+          <div className="file-explorer-summary">
+            <span>{explorer.entries.length} entries</span>
+            <span>{explorer.trackedCount} tracked</span>
+            {explorer.relativePath && <span>{explorer.relativePath}</span>}
+          </div>
+        )}
+        <div className="file-explorer-list">
+          {!explorer ? (
+            <p className="muted empty-pad">Loading files</p>
+          ) : visibleEntries.length === 0 ? (
+            <p className="muted empty-pad">No files found.</p>
+          ) : (
+            visibleEntries.map((entry) => (
+              <button
+                className="file-explorer-row"
+                key={`${entry.type}:${entry.path}`}
+                type="button"
+                onClick={() => entry.type === "directory" ? onBrowse(entry.path) : void onOpenFile(entry)}
+                title={entry.displayPath}
+              >
+                <span className={`file-explorer-icon ${entry.type}`}>
+                  {entry.type === "directory" ? <Folder size={18} /> : <FileText size={18} />}
+                </span>
+                <span className="file-explorer-main">
+                  <strong>{entry.name}</strong>
+                  <span>{entry.relativePath || entry.displayPath}</span>
+                </span>
+                <span className="file-explorer-meta">
+                  {entry.tracked && <span className="file-tracked-badge">git</span>}
+                  {entry.type === "file" && <span>{formatFileSize(entry.size ?? 0)}</span>}
+                  {entry.kind && <span>{entry.kind}</span>}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </section>
     </div>
   );
 }

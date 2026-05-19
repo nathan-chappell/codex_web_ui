@@ -82,6 +82,29 @@ export interface FilePreview {
   content?: string;
 }
 
+export interface FileExplorerEntry {
+  name: string;
+  path: string;
+  relativePath: string;
+  displayPath: string;
+  type: "file" | "directory";
+  tracked: boolean;
+  size: number | null;
+  modifiedAt: number | null;
+  kind: string | null;
+  previewable: boolean;
+}
+
+export interface FileExplorer {
+  cwd: string;
+  path: string;
+  relativePath: string;
+  displayPath: string;
+  parentPath: string | null;
+  trackedCount: number;
+  entries: FileExplorerEntry[];
+}
+
 export interface Turn {
   id: string;
   status: "completed" | "interrupted" | "failed" | "inProgress" | string;

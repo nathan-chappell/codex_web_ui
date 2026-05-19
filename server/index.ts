@@ -183,6 +183,10 @@ const server = http.createServer(async (req, res) => {
       return sendReferencedFile(url.searchParams, res, req.method === "HEAD", true, req.headers.range);
     }
 
+    if (url.pathname === "/api/files/explore" && req.method === "GET") {
+      return sendJson(res, 200, { ok: true, explorer: await exploreFiles(url.searchParams) });
+    }
+
     if (url.pathname === "/api/server/restart" && req.method === "POST") {
       await bridge.restart();
       return sendJson(res, 200, { ok: true, status: bridge.summary() });
@@ -465,6 +469,102 @@ async function saveUploadedFile(req: IncomingMessage): Promise<Record<string, un
   };
 }
 
+async function exploreFiles(searchParams: URLSearchParams): Promise<Record<string, unknown>> {
+  const cwd = resolveFilesCwd(searchParams.get("cwd"));
+  const currentPath = resolveFilesExplorerPath(cwd, searchParams.get("path"));
+  const stats = statSync(currentPath);
+  if (!stats.isDirectory()) {
+    throw new Error("Explorer path is not a directory");
+  }
+
+  const trackedFiles = await gitTrackedFiles(cwd);
+  const entries = new Map<string, Record<string, unknown>>();
+  const relativeDir = normalizeRelativePath(path.relative(cwd, currentPath));
+  const prefix = relativeDir ? `${relativeDir}/` : "";
+
+  for (const trackedFile of trackedFiles) {
+    const normalized = normalizeRelativePath(trackedFile);
+    if (!normalized || hasHiddenPathSegment(normalized) || (prefix && !normalized.startsWith(prefix))) {
+      continue;
+    }
+    const remainder = prefix ? normalized.slice(prefix.length) : normalized;
+    if (!remainder || remainder.includes("../")) {
+      continue;
+    }
+    const [name, ...rest] = remainder.split("/");
+    if (!name || isHiddenName(name)) {
+      continue;
+    }
+    const entryPath = path.join(currentPath, name);
+    const isFile = rest.length === 0;
+    entries.set(name, fileExplorerEntry(entryPath, cwd, isFile ? "file" : "directory", true));
+  }
+
+  const actualEntries = await readdir(currentPath, { withFileTypes: true });
+  for (const entry of actualEntries) {
+    if (isHiddenName(entry.name)) {
+      continue;
+    }
+    const entryPath = path.join(currentPath, entry.name);
+    let kind: "file" | "directory" | null = entry.isDirectory() ? "directory" : entry.isFile() ? "file" : null;
+    if (!kind && entry.isSymbolicLink()) {
+      try {
+        const linkedStats = statSync(entryPath);
+        kind = linkedStats.isDirectory() ? "directory" : linkedStats.isFile() ? "file" : null;
+      } catch {
+        kind = null;
+      }
+    }
+    if (!kind) {
+      continue;
+    }
+    const previous = entries.get(entry.name);
+    entries.set(entry.name, { ...fileExplorerEntry(entryPath, cwd, kind, Boolean(previous?.tracked)), tracked: Boolean(previous?.tracked) });
+  }
+
+  const sortedEntries = [...entries.values()].sort((a, b) => {
+    const aType = a.type === "directory" ? 0 : 1;
+    const bType = b.type === "directory" ? 0 : 1;
+    return aType - bType || String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" });
+  });
+
+  return {
+    cwd,
+    path: currentPath,
+    relativePath: normalizeRelativePath(path.relative(cwd, currentPath)),
+    displayPath: displayPath(currentPath),
+    parentPath: currentPath === cwd ? null : path.dirname(currentPath),
+    trackedCount: trackedFiles.length,
+    entries: sortedEntries
+  };
+}
+
+function fileExplorerEntry(filePath: string, cwd: string, type: "file" | "directory", tracked: boolean): Record<string, unknown> {
+  let size: number | null = null;
+  let modifiedAt: number | null = null;
+  try {
+    const stats = statSync(filePath);
+    size = stats.isFile() ? stats.size : null;
+    modifiedAt = Math.round(stats.mtimeMs);
+  } catch {
+    size = null;
+    modifiedAt = null;
+  }
+  const kind = type === "file" ? previewKindForPath(filePath) : null;
+  return {
+    name: path.basename(filePath),
+    path: filePath,
+    relativePath: normalizeRelativePath(path.relative(cwd, filePath)),
+    displayPath: displayPath(filePath),
+    type,
+    tracked,
+    size,
+    modifiedAt,
+    kind: kind || null,
+    previewable: type === "file" && Boolean(kind)
+  };
+}
+
 async function readReferencedFile(searchParams: URLSearchParams): Promise<Record<string, unknown>> {
   const filePath = resolveReferencedFilePath(searchParams.get("path"), searchParams.get("cwd"));
   const stats = statSync(filePath);
@@ -617,6 +717,53 @@ function resolveExplorerPath(inputPath: unknown): string {
     return path.resolve(homeDir, value.slice(2));
   }
   return path.resolve(path.isAbsolute(value) ? value : path.join(homeDir, value));
+}
+
+function resolveFilesCwd(inputCwd: string | null): string {
+  const summary = bridge.summary();
+  const fallback = typeof summary.cwd === "string" && summary.cwd ? summary.cwd : projectRoot;
+  return resolveReferencedFilePath(inputCwd?.trim() || fallback, null);
+}
+
+function resolveFilesExplorerPath(cwd: string, inputPath: string | null): string {
+  const value = inputPath?.trim();
+  if (!value) {
+    return cwd;
+  }
+  const filePath = resolveReferencedFilePath(value, cwd);
+  if (!isPathWithin(cwd, filePath)) {
+    throw new Error("Explorer path must stay within the working directory");
+  }
+  return filePath;
+}
+
+async function gitTrackedFiles(cwd: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", cwd, "ls-files", "-z"], { maxBuffer: 10 * 1024 * 1024 }, (error, stdout) => {
+      if (error) {
+        resolve([]);
+        return;
+      }
+      resolve(stdout.split("\0").filter(Boolean));
+    });
+  });
+}
+
+function normalizeRelativePath(value: string): string {
+  return value.split(path.sep).join("/").replace(/^\.\//, "");
+}
+
+function hasHiddenPathSegment(value: string): boolean {
+  return value.split("/").some(isHiddenName);
+}
+
+function isHiddenName(value: string): boolean {
+  return value.startsWith(".");
+}
+
+function isPathWithin(parentPath: string, childPath: string): boolean {
+  const relativePath = path.relative(parentPath, childPath);
+  return !relativePath || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
 function displayPath(filePath: string): string {

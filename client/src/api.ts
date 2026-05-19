@@ -1,4 +1,4 @@
-import type { AuthState, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
+import type { AuthState, FileExplorer, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
 
 export async function getAuth(): Promise<AuthState> {
   const body = await getJson<AuthState>("/api/auth");
@@ -40,6 +40,19 @@ export async function browseRepositories(path?: string): Promise<RepositoryBrows
   const query = path ? `?path=${encodeURIComponent(path)}` : "";
   const body = await getJson<{ browser: RepositoryBrowser }>(`/api/repositories/browse${query}`);
   return body.browser;
+}
+
+export async function browseFiles(options: { cwd?: string | null; path?: string | null } = {}): Promise<FileExplorer> {
+  const params = new URLSearchParams();
+  if (options.cwd) {
+    params.set("cwd", options.cwd);
+  }
+  if (options.path) {
+    params.set("path", options.path);
+  }
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const body = await getJson<{ explorer: FileExplorer }>(`/api/files/explore${query}`);
+  return body.explorer;
 }
 
 export async function createRepository(parentPath: string, name: string): Promise<RepositoryBrowser> {
