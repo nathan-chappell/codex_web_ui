@@ -1371,6 +1371,8 @@ const ThreadPane = memo(function ThreadPane({
           </div>
           <Composer
             activeTurnId={activeTurnId}
+            deliveryKey={thread.id}
+            deliveryVersion={itemCount}
             onInterrupt={onInterrupt}
             onSend={onSend}
             onFork={onFork}
@@ -2048,6 +2050,8 @@ const Composer = memo(function Composer({
   activeTurnId,
   archiveLabel,
   collapsed,
+  deliveryKey,
+  deliveryVersion,
   onArchive,
   onCompact,
   onCollapsedChange,
@@ -2059,6 +2063,8 @@ const Composer = memo(function Composer({
   activeTurnId: string | null;
   archiveLabel: string;
   collapsed: boolean;
+  deliveryKey: string;
+  deliveryVersion: number;
   onArchive: () => void;
   onCompact: () => void;
   onCollapsedChange: (collapsed: boolean) => void;
@@ -2070,45 +2076,49 @@ const Composer = memo(function Composer({
   const [draft, setDraft] = useState("");
   const [uploading, setUploading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
-  const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean } | null>(null);
+  const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const submissionNoticeTimerRef = useRef<number | null>(null);
+  const deliveryKeyRef = useRef(deliveryKey);
 
   useEffect(() => {
-    return () => {
-      if (submissionNoticeTimerRef.current) {
-        window.clearTimeout(submissionNoticeTimerRef.current);
-      }
-    };
-  }, []);
+    deliveryKeyRef.current = deliveryKey;
+    setSubmissionNotice(null);
+    setSubmittingAction(null);
+  }, [deliveryKey]);
+
+  useEffect(() => {
+    if (!submissionNotice) {
+      return;
+    }
+    if (submissionNotice.deliveryKey !== deliveryKey) {
+      setSubmissionNotice(null);
+      return;
+    }
+    if (deliveryVersion > submissionNotice.deliveryVersion) {
+      setSubmissionNotice(null);
+    }
+  }, [deliveryKey, deliveryVersion, submissionNotice]);
 
   async function submitDraft(action: ComposerAction) {
     if (submittingAction) {
       return;
     }
     const queued = action === "send" && Boolean(activeTurnId);
+    const baselineDeliveryVersion = deliveryVersion;
     setSubmissionNotice(null);
     setSubmittingAction(action);
     try {
       const sent = await onSend(draft, action);
       if (sent) {
         setDraft("");
-        showSubmissionNotice(action, queued);
+        if (deliveryKeyRef.current !== deliveryKey) {
+          return;
+        }
+        setSubmissionNotice({ action, queued, deliveryKey, deliveryVersion: baselineDeliveryVersion });
       }
     } finally {
       setSubmittingAction(null);
     }
-  }
-
-  function showSubmissionNotice(action: ComposerAction, queued: boolean) {
-    if (submissionNoticeTimerRef.current) {
-      window.clearTimeout(submissionNoticeTimerRef.current);
-    }
-    setSubmissionNotice({ action, queued });
-    submissionNoticeTimerRef.current = window.setTimeout(() => {
-      setSubmissionNotice(null);
-      submissionNoticeTimerRef.current = null;
-    }, 2600);
   }
 
   async function handleAttachmentFile(file: File | undefined) {
