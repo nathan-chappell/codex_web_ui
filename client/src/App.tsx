@@ -2,6 +2,7 @@ import {
   Archive,
   ChevronUp,
   ChevronsDown,
+  ChevronsUp,
   FileDiff,
   Folder,
   FolderGit2,
@@ -2317,16 +2318,17 @@ const Composer = memo(function Composer({
         await submitDraft("send");
       }}
     >
-      <div className="composer-collapsed-action">
-        <button className="primary-button" type="button" onClick={() => onCollapsedChange(false)}>
-          <Send size={16} /> Compose
+      <div className="composer-top">
+        <button
+          className="icon-button"
+          type="button"
+          onClick={() => onCollapsedChange(!collapsed)}
+          title={collapsed ? "Expand composer" : "Collapse composer"}
+          aria-label={collapsed ? "Expand composer" : "Collapse composer"}
+        >
+          {collapsed ? <ChevronsUp size={17} /> : <ChevronsDown size={17} />}
         </button>
-      </div>
-      <div className="composer-expanded">
-        <div className="composer-top">
-          <button className="icon-button" type="button" onClick={() => onCollapsedChange(true)} title="Collapse composer" aria-label="Collapse composer">
-            <ChevronsDown size={17} />
-          </button>
+        <div className="composer-tool-buttons">
           <button className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} title="Interrupt" aria-label="Interrupt">
             <PauseCircle size={17} />
           </button>
@@ -2337,6 +2339,8 @@ const Composer = memo(function Composer({
             <Minimize2 size={17} />
           </button>
         </div>
+      </div>
+      <div className="composer-body">
         <textarea ref={textareaRef} rows={5} placeholder="Send a new message or steer the active turn" />
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <div className="composer-bottom">
