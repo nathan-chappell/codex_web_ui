@@ -2069,12 +2069,46 @@ const Composer = memo(function Composer({
 }) {
   const [draft, setDraft] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
+  const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const submissionNoticeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (submissionNoticeTimerRef.current) {
+        window.clearTimeout(submissionNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
   async function submitDraft(action: ComposerAction) {
-    const sent = await onSend(draft, action);
-    if (sent) {
-      setDraft("");
+    if (submittingAction) {
+      return;
     }
+    const queued = action === "send" && Boolean(activeTurnId);
+    setSubmissionNotice(null);
+    setSubmittingAction(action);
+    try {
+      const sent = await onSend(draft, action);
+      if (sent) {
+        setDraft("");
+        showSubmissionNotice(action, queued);
+      }
+    } finally {
+      setSubmittingAction(null);
+    }
+  }
+
+  function showSubmissionNotice(action: ComposerAction, queued: boolean) {
+    if (submissionNoticeTimerRef.current) {
+      window.clearTimeout(submissionNoticeTimerRef.current);
+    }
+    setSubmissionNotice({ action, queued });
+    submissionNoticeTimerRef.current = window.setTimeout(() => {
+      setSubmissionNotice(null);
+      submissionNoticeTimerRef.current = null;
+    }, 2600);
   }
 
   async function handleAttachmentFile(file: File | undefined) {
@@ -2127,6 +2161,7 @@ const Composer = memo(function Composer({
           </button>
         </div>
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} placeholder="Send a new message or steer the active turn" />
+        <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <div className="composer-bottom">
           <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
           <div className="composer-actions">
@@ -2140,17 +2175,17 @@ const Composer = memo(function Composer({
               className="icon-button"
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
+              disabled={uploading || Boolean(submittingAction)}
               title="Attach file"
               aria-label="Attach file"
             >
               <Paperclip size={17} />
             </button>
-            <button className={activeTurnId ? "queue-button" : "primary-button"} type="submit">
-              <Send size={16} /> {activeTurnId ? "Enqueue" : "Send"}
+            <button className={activeTurnId ? "queue-button" : "primary-button"} type="submit" disabled={Boolean(submittingAction)}>
+              <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
             </button>
-            <button className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId}>
-              <Send size={16} /> Steer
+            <button className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId || Boolean(submittingAction)}>
+              <Send size={16} /> {submittingAction === "steer" ? "Steering" : "Steer"}
             </button>
             <button className="ghost-button" type="button" onClick={onArchive}>
               <Archive size={16} /> {archiveLabel}
@@ -2161,6 +2196,41 @@ const Composer = memo(function Composer({
     </form>
   );
 });
+
+function ComposerInputStatus({
+  action,
+  notice,
+  pendingQueued
+}: {
+  action: ComposerAction | null;
+  notice: { action: ComposerAction; queued: boolean } | null;
+  pendingQueued: boolean;
+}) {
+  if (action) {
+    return (
+      <div className="composer-input-status busy">
+        <span className="spinner" />
+        <span>{action === "steer" ? "Sending steer input" : pendingQueued ? "Enqueuing input" : "Sending input"}</span>
+      </div>
+    );
+  }
+  if (!notice) {
+    return null;
+  }
+  return (
+    <div className={`composer-input-status ${notice.action === "steer" ? "steer" : "queued"}`}>
+      <span className="status-dot" />
+      <span>{notice.action === "steer" ? "Steer sent" : notice.queued ? "Input enqueued" : "Input sent"}</span>
+    </div>
+  );
+}
+
+function sendButtonLabel(activeTurnId: string | null, submittingAction: ComposerAction | null): string {
+  if (submittingAction === "send") {
+    return activeTurnId ? "Enqueuing" : "Sending";
+  }
+  return activeTurnId ? "Enqueue" : "Send";
+}
 
 function statusClass(status: string): string {
   if (["running", "idle", "completed"].includes(status)) return "good";

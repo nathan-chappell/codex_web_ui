@@ -1037,17 +1037,8 @@ textarea {
 }
 
 .composer-collapsed-action {
-  display: flex;
+  display: none;
   justify-content: flex-end;
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  pointer-events: none;
-  transform: translateY(8px);
-  transition:
-    max-height 190ms ease,
-    opacity 160ms ease,
-    transform 190ms ease;
 }
 
 .composer.collapsed .composer-expanded {
@@ -1058,10 +1049,7 @@ textarea {
 }
 
 .composer.collapsed .composer-collapsed-action {
-  max-height: 44px;
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+  display: flex;
 }
 
 .composer-top,
@@ -1092,6 +1080,47 @@ textarea {
 
 .composer textarea {
   min-height: 118px;
+}
+
+.composer-input-status {
+  width: fit-content;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.composer-input-status.busy {
+  background: #fff7e8;
+  border-color: #efd6a8;
+  color: #6f4a00;
+}
+
+.composer-input-status.queued {
+  background: #fff0d7;
+  border-color: #efd6a8;
+  color: var(--amber);
+}
+
+.composer-input-status.steer {
+  background: #e4eefc;
+  border-color: #c3d6f5;
+  color: var(--blue);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: 0 0 auto;
 }
 
 .compact-checkbox {
