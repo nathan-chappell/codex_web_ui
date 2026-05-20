@@ -13,6 +13,13 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+export interface ClientRequest {
+  id: string | number;
+  method: string;
+  params: JsonValue;
+  receivedAt: number;
+}
+
 interface AppServerConnection {
   readonly pid: number | null;
   close(): Promise<void>;
@@ -33,6 +40,7 @@ export class CodexBridge {
   private connection: AppServerConnection | null = null;
   private nextId = 1;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly clientRequests = new Map<string, ClientRequest>();
   private startPromise: Promise<void> | null = null;
   private readonly stderrLines: { at: number; line: string }[] = [];
   private status: ServerStatus;
@@ -121,6 +129,25 @@ export class CodexBridge {
 
   notify(method: string, params?: JsonValue): void {
     this.write(params === undefined ? { method } : { method, params });
+  }
+
+  pendingClientRequests(): ClientRequest[] {
+    return [...this.clientRequests.values()].sort((a, b) => a.receivedAt - b.receivedAt);
+  }
+
+  respondClientRequest(id: string | number, result: JsonValue): void {
+    const key = String(id);
+    const request = this.clientRequests.get(key);
+    if (!request) {
+      throw new Error("Client request is not pending");
+    }
+    this.clientRequests.delete(key);
+    this.write({
+      jsonrpc: "2.0",
+      id: request.id,
+      result
+    });
+    this.hub.broadcast("client-request-resolved", { id: request.id, method: request.method, result });
   }
 
   private async startFresh(): Promise<void> {
@@ -260,13 +287,15 @@ export class CodexBridge {
       }
 
       if (message.method) {
+        const request = {
+          id: message.id as string | number,
+          method: message.method,
+          params: (message.params ?? {}) as JsonValue,
+          receivedAt: Date.now()
+        };
+        this.clientRequests.set(String(message.id), request);
         void this.logs.append({ type: "client-request", id: message.id, method: message.method, payload: message.params });
-        this.hub.broadcast("client-request", message);
-        this.write({
-          jsonrpc: "2.0",
-          id: message.id,
-          error: { code: -32601, message: "Client-side JSON-RPC requests are not implemented by this web UI" }
-        });
+        this.hub.broadcast("client-request", request);
         return;
       }
     }
@@ -320,6 +349,10 @@ export class CodexBridge {
     });
     this.connection = null;
     this.rejectPending(new Error(error ?? "codex app-server exited"));
+    for (const request of this.clientRequests.values()) {
+      this.hub.broadcast("client-request-resolved", { id: request.id, method: request.method, error: error ?? "codex app-server exited" });
+    }
+    this.clientRequests.clear();
   }
 }
 

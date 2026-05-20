@@ -160,6 +160,13 @@ export interface ServerEvent {
   at: number;
 }
 
+export interface ClientRequest {
+  id: string | number;
+  method: string;
+  params: JsonValue;
+  receivedAt: number;
+}
+
 export interface RepositoryEntry {
   name: string;
   path: string;

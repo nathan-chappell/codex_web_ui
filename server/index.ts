@@ -159,6 +159,20 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, result });
     }
 
+    if (url.pathname === "/api/client-requests" && req.method === "GET") {
+      return sendJson(res, 200, { ok: true, requests: bridge.pendingClientRequests() });
+    }
+
+    if (url.pathname === "/api/client-requests/respond" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const id = typeof body.id === "string" || typeof body.id === "number" ? body.id : null;
+      if (id === null) {
+        return sendJson(res, 400, { ok: false, error: "Missing client request id" });
+      }
+      bridge.respondClientRequest(id, (body.result ?? {}) as JsonValue);
+      return sendJson(res, 200, { ok: true });
+    }
+
     if (url.pathname === "/api/uploads" && req.method === "POST") {
       return sendJson(res, 200, { ok: true, attachment: await saveUploadedFile(req) });
     }

@@ -1,4 +1,4 @@
-import type { AuthState, FileExplorer, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
 
 const AUTH_TOKEN_STORAGE_KEY = "codex-web-ui-auth-token-v1";
 
@@ -31,6 +31,15 @@ export async function restartServer(): Promise<ServerStatus> {
 export async function rpc<T = unknown>(method: string, params: JsonValue = {}): Promise<T> {
   const body = await postJson<{ result: T }>("/api/rpc", { method, params });
   return body.result;
+}
+
+export async function getClientRequests(): Promise<ClientRequest[]> {
+  const body = await getJson<{ requests: ClientRequest[] }>("/api/client-requests");
+  return body.requests;
+}
+
+export async function respondClientRequest(id: string | number, result: JsonValue): Promise<void> {
+  await postJson("/api/client-requests/respond", { id, result });
 }
 
 export async function deleteThreadLog(threadId: string): Promise<void> {

@@ -29,18 +29,20 @@ import {
   deleteThreadLog,
   downloadReferencedFile,
   getAuth,
+  getClientRequests,
   getStatus,
   login,
   logout,
   openEventStream,
   readReferencedFile,
+  respondClientRequest,
   restartServer,
   rpc,
   uploadAttachment
 } from "./api";
 import type { AuthEventStream } from "./api";
 import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
-import type { AuthState, FileExplorer, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
 
 const defaultSettings: UiSettings = {
   cwd: "",
@@ -51,6 +53,7 @@ const defaultSettings: UiSettings = {
 };
 
 type ComposerAction = "send" | "steer";
+type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAmendment" | "decline";
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2 | 4;
 type StoredLayout = {
@@ -116,6 +119,8 @@ export default function App() {
   const [fileExplorerCache, setFileExplorerCache] = useState<Record<string, FileExplorer>>({});
   const [fileExplorerLoading, setFileExplorerLoading] = useState(false);
   const [loadingThreadByPane, setLoadingThreadByPane] = useState<Record<number, string>>({});
+  const [clientRequests, setClientRequests] = useState<Record<string, ClientRequest>>({});
+  const [respondingClientRequestIds, setRespondingClientRequestIds] = useState<Set<string>>(new Set());
 
   const eventSourceRef = useRef<AuthEventStream | null>(null);
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
@@ -173,6 +178,7 @@ export default function App() {
     loadSessions();
     restoreOpenThreadsFromLayout();
     loadRateLimits();
+    loadClientRequestQueue();
     eventSourceRef.current?.close();
     const source = openEventStream(
       (event) => {
@@ -217,6 +223,7 @@ export default function App() {
   const handleSendPaneMessage = useStableCallback((thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => sendMessageText(thread, paneIndex, text, action));
   const handleOpenFileReference = useStableCallback((reference: FileReference) => openFileReference(reference));
   const handlePaneError = useStableCallback((error: unknown) => showToast(error));
+  const handleRespondClientRequest = useStableCallback((request: ClientRequest, decision: ApprovalDecision) => respondToClientRequest(request, decision));
   useEffect(() => {
     const nextOpenThreadIds = Array.from({ length: threadPaneCount }, (_, index) => openThreadIdsRef.current[index] ?? null);
     openThreadIdsRef.current = nextOpenThreadIds;
@@ -510,6 +517,14 @@ export default function App() {
 
       </section>
 
+      {Object.keys(clientRequests).length > 0 && (
+        <ApprovalTray
+          requests={Object.values(clientRequests)}
+          respondingIds={respondingClientRequestIds}
+          onRespond={handleRespondClientRequest}
+        />
+      )}
+
       {newSessionOpen && (
         <SessionModal
           title="New Thread"
@@ -774,6 +789,36 @@ export default function App() {
       }
     } catch {
       setRateLimits((current) => current);
+    }
+  }
+
+  async function loadClientRequestQueue() {
+    try {
+      const requests = await getClientRequests();
+      setClientRequests(Object.fromEntries(requests.map((request) => [clientRequestKey(request.id), request])));
+    } catch (error) {
+      showToast(error);
+    }
+  }
+
+  async function respondToClientRequest(request: ClientRequest, decision: ApprovalDecision) {
+    const key = clientRequestKey(request.id);
+    setRespondingClientRequestIds((current) => new Set(current).add(key));
+    try {
+      await respondClientRequest(request.id, { decision: approvalDecisionPayload(request, decision) });
+      setClientRequests((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    } catch (error) {
+      showToast(error);
+    } finally {
+      setRespondingClientRequestIds((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     }
   }
 
@@ -1161,6 +1206,25 @@ export default function App() {
       setServerStatus(event.payload as ServerStatus);
       return;
     }
+    if (event.type === "client-request") {
+      const request = parseClientRequest(event.payload);
+      if (request) {
+        setClientRequests((current) => ({ ...current, [clientRequestKey(request.id)]: request }));
+      }
+      return;
+    }
+    if (event.type === "client-request-resolved") {
+      const record = asRecord(event.payload);
+      const id = typeof record.id === "string" || typeof record.id === "number" ? record.id : null;
+      if (id !== null) {
+        setClientRequests((current) => {
+          const next = { ...current };
+          delete next[clientRequestKey(id)];
+          return next;
+        });
+      }
+      return;
+    }
     if (event.type !== "notification") {
       return;
     }
@@ -1195,6 +1259,20 @@ export default function App() {
       const nextRateLimits = parseRateLimitsUpdate(params);
       if (nextRateLimits) {
         setRateLimits(nextRateLimits);
+      }
+    }
+    if (method === "serverRequest/resolved") {
+      const id = typeof params.id === "string" || typeof params.id === "number"
+        ? params.id
+        : typeof params.requestId === "string" || typeof params.requestId === "number"
+          ? params.requestId
+          : null;
+      if (id !== null) {
+        setClientRequests((current) => {
+          const next = { ...current };
+          delete next[clientRequestKey(id)];
+          return next;
+        });
       }
     }
     if (threadId && openThreadIdsRef.current.includes(threadId) && method.startsWith("item/")) {
@@ -1545,6 +1623,82 @@ const ThreadPane = memo(function ThreadPane({
     </section>
   );
 });
+
+function ApprovalTray({
+  onRespond,
+  requests,
+  respondingIds
+}: {
+  onRespond: (request: ClientRequest, decision: ApprovalDecision) => Promise<void>;
+  requests: ClientRequest[];
+  respondingIds: Set<string>;
+}) {
+  const sortedRequests = [...requests].sort((a, b) => a.receivedAt - b.receivedAt);
+  return (
+    <aside className="approval-tray" aria-label="Pending approvals">
+      <header>
+        <strong>Approval needed</strong>
+        <span>{sortedRequests.length} pending</span>
+      </header>
+      <div className="approval-list">
+        {sortedRequests.map((request) => (
+          <ApprovalRequestCard
+            key={clientRequestKey(request.id)}
+            onRespond={onRespond}
+            request={request}
+            responding={respondingIds.has(clientRequestKey(request.id))}
+          />
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function ApprovalRequestCard({
+  onRespond,
+  request,
+  responding
+}: {
+  onRespond: (request: ClientRequest, decision: ApprovalDecision) => Promise<void>;
+  request: ClientRequest;
+  responding: boolean;
+}) {
+  const params = asRecord(request.params);
+  const command = typeof params.command === "string" ? params.command : commandFromActions(params.commandActions);
+  const cwd = typeof params.cwd === "string" ? params.cwd : "";
+  const reason = typeof params.reason === "string" ? params.reason : "";
+  const canTrust = Boolean(execpolicyDecision(request));
+  const canAcceptForSession = hasAvailableDecision(request, "acceptForSession");
+  return (
+    <section className="approval-card">
+      <div className="approval-card-heading">
+        <span>{approvalTitle(request.method)}</span>
+        <code>{request.method}</code>
+      </div>
+      {reason && <p className="approval-reason">{reason}</p>}
+      {command && <pre className="approval-command">{command}</pre>}
+      {cwd && <p className="muted">{cwd}</p>}
+      <div className="approval-actions">
+        <button className="primary-button" type="button" disabled={responding} onClick={() => void onRespond(request, "accept")}>
+          Approve
+        </button>
+        {canAcceptForSession && (
+          <button className="secondary-button" type="button" disabled={responding} onClick={() => void onRespond(request, "acceptForSession")}>
+            Approve session
+          </button>
+        )}
+        {canTrust && (
+          <button className="secondary-button" type="button" disabled={responding} onClick={() => void onRespond(request, "acceptWithExecpolicyAmendment")}>
+            Trust command
+          </button>
+        )}
+        <button className="danger-button" type="button" disabled={responding} onClick={() => void onRespond(request, "decline")}>
+          Deny
+        </button>
+      </div>
+    </section>
+  );
+}
 
 function StatusModal({
   rateLimits,
@@ -2427,6 +2581,68 @@ function statusLabel(status: string): string {
   return labels[status] || status;
 }
 
+function parseClientRequest(value: unknown): ClientRequest | null {
+  const record = asRecord(value);
+  const id = typeof record.id === "string" || typeof record.id === "number" ? record.id : null;
+  const method = typeof record.method === "string" ? record.method : "";
+  if (id === null || !method) {
+    return null;
+  }
+  return {
+    id,
+    method,
+    params: isJsonValue(record.params) ? record.params : {},
+    receivedAt: numberValue(record.receivedAt) ?? Date.now()
+  };
+}
+
+function clientRequestKey(id: string | number): string {
+  return String(id);
+}
+
+function approvalDecisionPayload(request: ClientRequest, decision: ApprovalDecision): JsonValue {
+  if (decision === "acceptWithExecpolicyAmendment") {
+    return execpolicyDecision(request) ?? "accept";
+  }
+  if (decision === "decline" && !hasAvailableDecision(request, "decline") && hasAvailableDecision(request, "cancel")) {
+    return "cancel";
+  }
+  return decision;
+}
+
+function hasAvailableDecision(request: ClientRequest, decision: string): boolean {
+  const available = availableDecisions(request);
+  return available.some((item) => item === decision);
+}
+
+function execpolicyDecision(request: ClientRequest): JsonValue | null {
+  const available = availableDecisions(request);
+  const explicit = available.find((item) => isRecordWithKey(item, "acceptWithExecpolicyAmendment"));
+  if (explicit) {
+    return explicit;
+  }
+  const params = asRecord(request.params);
+  const amendment = Array.isArray(params.proposedExecpolicyAmendment) ? params.proposedExecpolicyAmendment : null;
+  return amendment ? { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment.filter(isJsonValue) } } : null;
+}
+
+function availableDecisions(request: ClientRequest): JsonValue[] {
+  const params = asRecord(request.params);
+  return Array.isArray(params.availableDecisions) ? params.availableDecisions.filter(isJsonValue) : [];
+}
+
+function isRecordWithKey(value: JsonValue, key: string): boolean {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && key in value);
+}
+
+function approvalTitle(method: string): string {
+  if (method === "item/commandExecution/requestApproval") return "Command execution";
+  if (method === "item/fileChange/requestApproval") return "File change";
+  if (method === "item/mcpToolCall/requestApproval") return "MCP tool call";
+  if (method === "item/permissions/requestApproval") return "Permission request";
+  return "App-server request";
+}
+
 function titleForThread(thread: Thread): string {
   return thread.name || thread.preview || thread.id;
 }
@@ -2808,6 +3024,19 @@ function rateLimitRemainingPercent(rateLimits: RateLimitSnapshot | null, target:
   const byDuration = windows.find((item) => item.windowDurationMins !== null && Math.abs(item.windowDurationMins - targetMinutes) <= 30);
   const usedPercent = byDuration?.usedPercent ?? (target === "5hr" ? rateLimits.primary?.usedPercent ?? null : rateLimits.secondary?.usedPercent ?? null);
   return usedPercent === null ? null : Math.max(0, Math.min(100, 100 - usedPercent));
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || ["boolean", "number", "string"].includes(typeof value)) {
+    return typeof value !== "number" || Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).every(isJsonValue);
+  }
+  return false;
 }
 
 function numberValue(value: unknown): number | null {
