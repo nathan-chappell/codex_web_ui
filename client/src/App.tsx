@@ -53,11 +53,20 @@ const defaultSettings: UiSettings = {
 type ComposerAction = "send" | "steer";
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2 | 4;
+type StoredLayout = {
+  activePaneIndex?: number;
+  mobilePane?: MobilePane;
+  openThreadIds?: (string | null)[];
+  sidebarWidth?: number;
+  threadPaneCount?: ThreadPaneCount;
+};
 
 const THREAD_ITEM_BATCH_SIZE = 20;
 const SESSION_PAGE_SIZE = 50;
 const ACCOUNT_RATE_LIMIT_ID = "codex";
+const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
 const mobilePanes: MobilePane[] = ["sessions", "thread"];
+const initialStoredLayout = readStoredLayout();
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthState | null>(null);
@@ -69,20 +78,20 @@ export default function App() {
   const [loadedThreadIds, setLoadedThreadIds] = useState<Set<string>>(new Set());
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
-  const [openThreadIds, setOpenThreadIds] = useState<(string | null)[]>([null]);
+  const [openThreadIds, setOpenThreadIds] = useState<(string | null)[]>(() => initialOpenThreadIds(initialStoredLayout));
   const [openThreads, setOpenThreads] = useState<Record<string, Thread>>({});
-  const [activePaneIndex, setActivePaneIndex] = useState(0);
+  const [activePaneIndex, setActivePaneIndex] = useState(() => initialActivePaneIndex(initialStoredLayout));
   const [sessionPreviews, setSessionPreviews] = useState<Record<string, string>>({});
   const [sessionPage, setSessionPage] = useState(1);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
-  const [sidebarWidth, setSidebarWidth] = useState(330);
+  const [sidebarWidth, setSidebarWidth] = useState(() => clampNumber(initialStoredLayout.sidebarWidth, 240, 520, 330));
   const [showArchived, setShowArchived] = useState(false);
   const [recentOnly, setRecentOnly] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [mobilePane, setMobilePane] = useState<MobilePane>("sessions");
-  const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(1);
+  const [mobilePane, setMobilePane] = useState<MobilePane>(() => initialStoredLayout.mobilePane ?? "sessions");
+  const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(() => initialStoredLayout.threadPaneCount ?? 1);
   const [toast, setToast] = useState("");
   const [settings, setSettings] = useState<UiSettings>({ ...defaultSettings });
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -106,8 +115,9 @@ export default function App() {
   const fileExplorerLoadSeqRef = useRef(0);
   const filePreviewLoadSeqRef = useRef(0);
   const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
-  const activePaneIndexRef = useRef(0);
-  const openThreadIdsRef = useRef<(string | null)[]>([null]);
+  const activePaneIndexRef = useRef(activePaneIndex);
+  const openThreadIdsRef = useRef<(string | null)[]>(openThreadIds);
+  const restoredLayoutThreadsRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean } | null>(null);
   const resizingSidebarRef = useRef(false);
   const longPressTimerRef = useRef<number | null>(null);
@@ -140,6 +150,7 @@ export default function App() {
     }
     getStatus().then(setServerStatus).catch(showToast);
     loadSessions();
+    restoreOpenThreadsFromLayout();
     loadRateLimits();
     eventSourceRef.current?.close();
     const source = openEventStream(
@@ -191,6 +202,16 @@ export default function App() {
   useEffect(() => {
     activePaneIndexRef.current = activePaneIndex;
   }, [activePaneIndex]);
+
+  useEffect(() => {
+    writeStoredLayout({
+      activePaneIndex,
+      mobilePane,
+      openThreadIds,
+      sidebarWidth,
+      threadPaneCount
+    });
+  }, [activePaneIndex, mobilePane, openThreadIds, sidebarWidth, threadPaneCount]);
 
   if (authenticated === null) {
     return <div className="boot">Loading</div>;
@@ -667,6 +688,44 @@ export default function App() {
       if (loadId === sessionsLoadSeqRef.current) {
         setSessionsLoading(false);
       }
+    }
+  }
+
+  function restoreOpenThreadsFromLayout() {
+    if (restoredLayoutThreadsRef.current) {
+      return;
+    }
+    restoredLayoutThreadsRef.current = true;
+    const entries = openThreadIdsRef.current
+      .map((threadId, paneIndex) => ({ threadId, paneIndex }))
+      .filter((entry): entry is { threadId: string; paneIndex: number } => Boolean(entry.threadId));
+    if (entries.length === 0) {
+      return;
+    }
+    const activeThreadId = openThreadIdsRef.current[activePaneIndexRef.current] ?? entries[0]?.threadId ?? null;
+    if (activeThreadId) {
+      setSelectedThreadId(activeThreadId);
+    }
+    setLoadingThreadByPane((current) => {
+      const next = { ...current };
+      for (const entry of entries) {
+        next[entry.paneIndex] = entry.threadId;
+      }
+      return next;
+    });
+    for (const entry of entries) {
+      const loadToken = ++threadLoadSeqRef.current;
+      paneThreadLoadTokensRef.current[entry.paneIndex] = loadToken;
+      void readThread(entry.threadId, entry.paneIndex, loadToken).finally(() => {
+        setLoadingThreadByPane((current) => {
+          if (current[entry.paneIndex] !== entry.threadId) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[entry.paneIndex];
+          return next;
+        });
+      });
     }
   }
 
@@ -2073,11 +2132,11 @@ const Composer = memo(function Composer({
   onInterrupt: () => void;
   onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
 }) {
-  const [draft, setDraft] = useState("");
   const [uploading, setUploading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
 
   useEffect(() => {
@@ -2108,9 +2167,9 @@ const Composer = memo(function Composer({
     setSubmissionNotice(null);
     setSubmittingAction(action);
     try {
-      const sent = await onSend(draft, action);
+      const sent = await onSend(readDraft(), action);
       if (sent) {
-        setDraft("");
+        setDraftValue("");
         if (deliveryKeyRef.current !== deliveryKey) {
           return;
         }
@@ -2128,7 +2187,8 @@ const Composer = memo(function Composer({
     setUploading(true);
     try {
       const attachment = await uploadAttachment(file);
-      setDraft((current) => (current.trim() ? `${current}\n${attachment.path}` : attachment.path));
+      const current = readDraft();
+      setDraftValue(current.trim() ? `${current}\n${attachment.path}` : attachment.path);
     } catch (error) {
       onError(error);
     } finally {
@@ -2136,6 +2196,16 @@ const Composer = memo(function Composer({
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+    }
+  }
+
+  function readDraft(): string {
+    return textareaRef.current?.value ?? "";
+  }
+
+  function setDraftValue(value: string) {
+    if (textareaRef.current) {
+      textareaRef.current.value = value;
     }
   }
 
@@ -2170,7 +2240,7 @@ const Composer = memo(function Composer({
             <Minimize2 size={17} />
           </button>
         </div>
-        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} placeholder="Send a new message or steer the active turn" />
+        <textarea ref={textareaRef} rows={5} placeholder="Send a new message or steer the active turn" />
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <div className="composer-bottom">
           <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
@@ -2435,6 +2505,67 @@ function canScrollHorizontally(element: Element): boolean {
 
 function isMobileViewport(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 780px)").matches;
+}
+
+function readStoredLayout(): StoredLayout {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    return parseStoredLayout(JSON.parse(window.localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}"));
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredLayout(layout: StoredLayout): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
+      activePaneIndex: clampNumber(layout.activePaneIndex, 0, (layout.threadPaneCount ?? 1) - 1, 0),
+      mobilePane: layout.mobilePane,
+      openThreadIds: initialOpenThreadIds(layout),
+      sidebarWidth: clampNumber(layout.sidebarWidth, 240, 520, 330),
+      threadPaneCount: layout.threadPaneCount
+    }));
+  } catch {
+    // Local storage is an optimization; the app still works without it.
+  }
+}
+
+function parseStoredLayout(value: unknown): StoredLayout {
+  const record = asRecord(value);
+  const threadPaneCount = parseThreadPaneCount(record.threadPaneCount);
+  const mobilePane = record.mobilePane === "thread" || record.mobilePane === "sessions" ? record.mobilePane : undefined;
+  return {
+    activePaneIndex: numberValue(record.activePaneIndex) ?? undefined,
+    mobilePane,
+    openThreadIds: Array.isArray(record.openThreadIds)
+      ? record.openThreadIds.map((item) => typeof item === "string" && item ? item : null)
+      : undefined,
+    sidebarWidth: numberValue(record.sidebarWidth) ?? undefined,
+    threadPaneCount
+  };
+}
+
+function initialOpenThreadIds(layout: StoredLayout): (string | null)[] {
+  const count = layout.threadPaneCount ?? 1;
+  const ids = layout.openThreadIds ?? [];
+  return Array.from({ length: count }, (_, index) => ids[index] ?? null);
+}
+
+function initialActivePaneIndex(layout: StoredLayout): number {
+  return clampNumber(layout.activePaneIndex, 0, (layout.threadPaneCount ?? 1) - 1, 0);
+}
+
+function parseThreadPaneCount(value: unknown): ThreadPaneCount | undefined {
+  return value === 1 || value === 2 || value === 4 ? value : undefined;
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
 function activeTurnFromThread(thread: Thread): string | null {
