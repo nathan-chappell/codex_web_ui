@@ -17,7 +17,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -67,6 +67,14 @@ const ACCOUNT_RATE_LIMIT_ID = "codex";
 const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
 const mobilePanes: MobilePane[] = ["sessions", "thread"];
 const initialStoredLayout = readStoredLayout();
+
+function useStableCallback<T extends (...args: never[]) => unknown>(callback: T): T {
+  const callbackRef = useRef(callback);
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+  });
+  return useCallback(((...args: Parameters<T>) => callbackRef.current(...args)) as T, []);
+}
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthState | null>(null);
@@ -120,6 +128,11 @@ export default function App() {
   const restoredLayoutThreadsRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean } | null>(null);
   const resizingSidebarRef = useRef(false);
+  const layoutRef = useRef<HTMLElement | null>(null);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  const sidebarResizeFrameRef = useRef<number | null>(null);
+  const pendingSidebarWidthRef = useRef(sidebarWidth);
+  const layoutWriteTimerRef = useRef<number | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressActivatedRef = useRef(false);
   const sessionClickTimerRef = useRef<number | null>(null);
@@ -132,6 +145,12 @@ export default function App() {
       refreshTimersRef.current.clear();
       if (listTimerRef.current) {
         window.clearTimeout(listTimerRef.current);
+      }
+      if (layoutWriteTimerRef.current) {
+        window.clearTimeout(layoutWriteTimerRef.current);
+      }
+      if (sidebarResizeFrameRef.current) {
+        window.cancelAnimationFrame(sidebarResizeFrameRef.current);
       }
       clearSessionLongPress();
       clearSessionClickTimer();
@@ -186,6 +205,16 @@ export default function App() {
   const activeThread = activeThreadId ? openThreads[activeThreadId] ?? selectedThread : null;
   const topbarContext = topbarContextText(serverStatus, activeThreadId, activeThread);
   const selectionActive = selectedSessionIds.size > 0;
+  const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
+  const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
+  const handleCompactPaneThread = useStableCallback((thread: Thread) => compactThread(thread));
+  const handleForkPaneThread = useStableCallback((thread: Thread, paneIndex: number) => forkThread(thread, paneIndex));
+  const handleInterruptPaneThread = useStableCallback((thread: Thread) => interruptThread(thread));
+  const handleRenamePaneThread = useStableCallback((thread: Thread, name: string) => renameThread(thread, name));
+  const handleSelectPaneThread = useStableCallback((threadId: string, paneIndex: number) => selectThread(threadId, paneIndex));
+  const handleSendPaneMessage = useStableCallback((thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => sendMessageText(thread, paneIndex, text, action));
+  const handleOpenFileReference = useStableCallback((reference: FileReference) => openFileReference(reference));
+  const handlePaneError = useStableCallback((error: unknown) => showToast(error));
   useEffect(() => {
     const nextOpenThreadIds = Array.from({ length: threadPaneCount }, (_, index) => openThreadIdsRef.current[index] ?? null);
     openThreadIdsRef.current = nextOpenThreadIds;
@@ -210,8 +239,14 @@ export default function App() {
       openThreadIds,
       sidebarWidth,
       threadPaneCount
-    });
+    }, layoutWriteTimerRef);
   }, [activePaneIndex, mobilePane, openThreadIds, sidebarWidth, threadPaneCount]);
+
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth;
+    pendingSidebarWidthRef.current = sidebarWidth;
+    layoutRef.current?.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
+  }, [sidebarWidth]);
 
   if (authenticated === null) {
     return <div className="boot">Loading</div>;
@@ -283,6 +318,7 @@ export default function App() {
       </nav>
 
       <section
+        ref={layoutRef}
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
         className={`layout mobile-pane-${mobilePane}`}
         onTouchStart={(event) => {
@@ -411,20 +447,23 @@ export default function App() {
           aria-orientation="vertical"
           onPointerDown={(event) => {
             resizingSidebarRef.current = true;
+            pendingSidebarWidthRef.current = sidebarWidthRef.current;
             event.currentTarget.setPointerCapture(event.pointerId);
           }}
           onPointerMove={(event) => {
             if (!resizingSidebarRef.current) {
               return;
             }
-            setSidebarWidth(Math.min(520, Math.max(240, event.clientX)));
+            updateSidebarWidthDuringResize(Math.min(520, Math.max(240, event.clientX)));
           }}
           onPointerUp={(event) => {
             resizingSidebarRef.current = false;
+            setSidebarWidth(pendingSidebarWidthRef.current);
             event.currentTarget.releasePointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
             resizingSidebarRef.current = false;
+            setSidebarWidth(pendingSidebarWidthRef.current);
           }}
         />
 
@@ -453,16 +492,17 @@ export default function App() {
                   isActive={paneIndex === activePaneIndex}
                   isLoading={isLoadingThread}
                   key={paneIndex}
-                  onActivate={() => activatePane(paneIndex)}
-                  onArchive={() => thread && archiveThread(thread, paneIndex)}
-                  onCompact={() => thread && compactThread(thread)}
-                  onFork={() => thread && forkThread(thread, paneIndex)}
-                  onInterrupt={() => thread && interruptThread(thread)}
-                  onRename={(name) => (thread ? renameThread(thread, name) : Promise.resolve())}
-                  onError={showToast}
-                  onOpenFile={openFileReference}
-                  onSelectThread={(nextThreadId) => selectThread(nextThreadId, paneIndex)}
-                  onSend={(text, action) => (thread ? sendMessageText(thread, paneIndex, text, action) : Promise.resolve(false))}
+                  onActivatePane={handleActivatePane}
+                  onArchiveThread={handleArchivePaneThread}
+                  onCompactThread={handleCompactPaneThread}
+                  onForkThread={handleForkPaneThread}
+                  onInterruptThread={handleInterruptPaneThread}
+                  onRenameThread={handleRenamePaneThread}
+                  onError={handlePaneError}
+                  onOpenFile={handleOpenFileReference}
+                  onSelectPaneThread={handleSelectPaneThread}
+                  onSendMessage={handleSendPaneMessage}
+                  paneIndex={paneIndex}
                   paneCount={threadPaneCount}
                   rateLimits={rateLimits}
                   thread={thread}
@@ -1252,6 +1292,17 @@ export default function App() {
       return mobilePanes[nextIndex] ?? current;
     });
   }
+
+  function updateSidebarWidthDuringResize(width: number) {
+    pendingSidebarWidthRef.current = width;
+    if (sidebarResizeFrameRef.current !== null) {
+      return;
+    }
+    sidebarResizeFrameRef.current = window.requestAnimationFrame(() => {
+      sidebarResizeFrameRef.current = null;
+      layoutRef.current?.style.setProperty("--sidebar-width", `${pendingSidebarWidthRef.current}px`);
+    });
+  }
 }
 
 const ThreadPane = memo(function ThreadPane({
@@ -1260,16 +1311,17 @@ const ThreadPane = memo(function ThreadPane({
   archiveLabel,
   isActive,
   isLoading,
-  onActivate,
-  onArchive,
-  onCompact,
-  onFork,
-  onInterrupt,
-  onRename,
+  onActivatePane,
+  onArchiveThread,
+  onCompactThread,
+  onForkThread,
+  onInterruptThread,
+  onRenameThread,
   onError,
   onOpenFile,
-  onSelectThread,
-  onSend,
+  onSelectPaneThread,
+  onSendMessage,
+  paneIndex,
   paneCount,
   rateLimits,
   thread
@@ -1279,16 +1331,17 @@ const ThreadPane = memo(function ThreadPane({
   archiveLabel: string;
   isActive: boolean;
   isLoading: boolean;
-  onActivate: () => void;
-  onArchive: () => void;
-  onCompact: () => void;
-  onFork: () => void;
-  onInterrupt: () => void;
-  onRename: (name: string) => Promise<void>;
+  onActivatePane: (paneIndex: number) => void;
+  onArchiveThread: (thread: Thread, paneIndex: number) => void;
+  onCompactThread: (thread: Thread) => void;
+  onForkThread: (thread: Thread, paneIndex: number) => void;
+  onInterruptThread: (thread: Thread) => void;
+  onRenameThread: (thread: Thread, name: string) => Promise<void>;
   onError: (error: unknown) => void;
   onOpenFile: (reference: FileReference) => Promise<void>;
-  onSelectThread: (threadId: string) => void;
-  onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
+  onSelectPaneThread: (threadId: string, paneIndex: number) => void;
+  onSendMessage: (thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => Promise<boolean>;
+  paneIndex: number;
   paneCount: ThreadPaneCount;
   rateLimits: RateLimitSnapshot | null;
   thread: Thread | null;
@@ -1298,25 +1351,37 @@ const ThreadPane = memo(function ThreadPane({
   const conversationRef = useRef<HTMLDivElement | null>(null);
   const conversationScrollTopRef = useRef(0);
   const composerManuallyCollapsedRef = useRef(false);
+  const topHiddenRef = useRef(topHidden);
+  const composerCollapsedRef = useRef(composerCollapsed);
+  const chromeStateFrameRef = useRef<number | null>(null);
+  const pendingChromeStateRef = useRef<{ topHidden?: boolean; composerCollapsed?: boolean }>({});
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
   const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [thread?.turns]);
+
+  useEffect(() => {
+    return () => {
+      if (chromeStateFrameRef.current !== null) {
+        window.cancelAnimationFrame(chromeStateFrameRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!thread) {
       lastThreadViewRef.current = "";
       lastItemCountRef.current = 0;
       composerManuallyCollapsedRef.current = false;
-      setTopHidden(false);
-      setComposerCollapsed(false);
+      setTopHiddenState(false);
+      setComposerCollapsedState(false);
       return;
     }
     if (lastThreadViewRef.current !== thread.id) {
       lastThreadViewRef.current = thread.id;
       lastItemCountRef.current = itemCount;
       composerManuallyCollapsedRef.current = false;
-      setTopHidden(isMobileViewport());
-      setComposerCollapsed(false);
+      setTopHiddenState(isMobileViewport());
+      setComposerCollapsedState(false);
       scrollToEnd();
       return;
     }
@@ -1341,27 +1406,21 @@ const ThreadPane = memo(function ThreadPane({
 
     if (isMobileViewport()) {
       if (scrollingTowardHistory && awayFromBottom) {
-        setTopHidden(false);
-        if (!composerManuallyCollapsedRef.current) {
-          setComposerCollapsed(true);
-        }
+        scheduleChromeState({ topHidden: false, composerCollapsed: composerManuallyCollapsedRef.current ? undefined : true });
         return;
       }
       if (nearBottom) {
-        setTopHidden(true);
-        if (!composerManuallyCollapsedRef.current) {
-          setComposerCollapsed(false);
-        }
+        scheduleChromeState({ topHidden: true, composerCollapsed: composerManuallyCollapsedRef.current ? undefined : false });
         return;
       }
       if (scrollingTowardBottom) {
-        setTopHidden(true);
+        scheduleChromeState({ topHidden: true });
       }
       return;
     }
 
-    if (topHidden) {
-      setTopHidden(false);
+    if (topHiddenRef.current) {
+      scheduleChromeState({ topHidden: false });
     }
   }
 
@@ -1374,9 +1433,9 @@ const ThreadPane = memo(function ThreadPane({
       element.scrollTop = element.scrollHeight;
       conversationScrollTopRef.current = element.scrollTop;
       if (isMobileViewport()) {
-        setTopHidden(true);
+        setTopHiddenState(true);
         if (!composerManuallyCollapsedRef.current) {
-          setComposerCollapsed(false);
+          setComposerCollapsedState(false);
         }
       }
     });
@@ -1384,14 +1443,52 @@ const ThreadPane = memo(function ThreadPane({
 
   function handleComposerCollapsedChange(collapsed: boolean) {
     composerManuallyCollapsedRef.current = collapsed;
-    setComposerCollapsed(collapsed);
+    setComposerCollapsedState(collapsed);
+  }
+
+  function scheduleChromeState(nextState: { topHidden?: boolean; composerCollapsed?: boolean }) {
+    pendingChromeStateRef.current = {
+      ...pendingChromeStateRef.current,
+      ...(nextState.topHidden === undefined ? {} : { topHidden: nextState.topHidden }),
+      ...(nextState.composerCollapsed === undefined ? {} : { composerCollapsed: nextState.composerCollapsed })
+    };
+    if (chromeStateFrameRef.current !== null) {
+      return;
+    }
+    chromeStateFrameRef.current = window.requestAnimationFrame(() => {
+      chromeStateFrameRef.current = null;
+      const pending = pendingChromeStateRef.current;
+      pendingChromeStateRef.current = {};
+      if (pending.topHidden !== undefined) {
+        setTopHiddenState(pending.topHidden);
+      }
+      if (pending.composerCollapsed !== undefined) {
+        setComposerCollapsedState(pending.composerCollapsed);
+      }
+    });
+  }
+
+  function setTopHiddenState(value: boolean) {
+    if (topHiddenRef.current === value) {
+      return;
+    }
+    topHiddenRef.current = value;
+    setTopHidden(value);
+  }
+
+  function setComposerCollapsedState(value: boolean) {
+    if (composerCollapsedRef.current === value) {
+      return;
+    }
+    composerCollapsedRef.current = value;
+    setComposerCollapsed(value);
   }
 
   return (
-    <section className={`thread-panel ${topHidden ? "top-hidden" : ""} ${isActive ? "active" : ""}`} onPointerDown={onActivate}>
+    <section className={`thread-panel ${topHidden ? "top-hidden" : ""} ${isActive ? "active" : ""}`} onPointerDown={() => onActivatePane(paneIndex)}>
       <header className="thread-header">
         {paneCount > 1 && (
-          <select className="thread-select" value={thread?.id ?? ""} onChange={(event) => event.target.value && onSelectThread(event.target.value)}>
+          <select className="thread-select" value={thread?.id ?? ""} onChange={(event) => event.target.value && onSelectPaneThread(event.target.value, paneIndex)}>
             <option value="">Select thread</option>
             {allThreads.map((item) => (
               <option key={item.id} value={item.id}>{projectNameForThread(item)} - {titleForThread(item)}</option>
@@ -1401,7 +1498,7 @@ const ThreadPane = memo(function ThreadPane({
         {thread ? (
           <div className="thread-title-block">
             <StatusBadge value={statusType(thread)} />
-            <EditableThreadTitle thread={thread} onRename={onRename} />
+            <EditableThreadTitle thread={thread} onRename={(name) => onRenameThread(thread, name)} />
             <p>{thread.cwd || "cwd unavailable"} | {thread.id}</p>
             <ThreadUsageStats rateLimits={rateLimits} />
           </div>
@@ -1432,11 +1529,11 @@ const ThreadPane = memo(function ThreadPane({
             activeTurnId={activeTurnId}
             deliveryKey={thread.id}
             deliveryVersion={itemCount}
-            onInterrupt={onInterrupt}
-            onSend={onSend}
-            onFork={onFork}
-            onCompact={onCompact}
-            onArchive={onArchive}
+            onInterrupt={() => onInterruptThread(thread)}
+            onSend={(text, action) => onSendMessage(thread, paneIndex, text, action)}
+            onFork={() => onForkThread(thread, paneIndex)}
+            onCompact={() => onCompactThread(thread)}
+            onArchive={() => onArchiveThread(thread, paneIndex)}
             archiveLabel={archiveLabel}
             collapsed={composerCollapsed}
             onError={onError}
@@ -2518,8 +2615,18 @@ function readStoredLayout(): StoredLayout {
   }
 }
 
-function writeStoredLayout(layout: StoredLayout): void {
+function writeStoredLayout(layout: StoredLayout, timerRef?: RefObject<number | null>): void {
   if (typeof window === "undefined") {
+    return;
+  }
+  if (timerRef) {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+    }
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      writeStoredLayout(layout);
+    }, 350);
     return;
   }
   try {
