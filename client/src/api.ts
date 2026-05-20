@@ -1,20 +1,21 @@
 import type { AuthState, FileExplorer, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
 
+const AUTH_TOKEN_STORAGE_KEY = "codex-web-ui-auth-token-v1";
+
 export async function getAuth(): Promise<AuthState> {
   const body = await getJson<AuthState>("/api/auth");
   return body;
 }
 
-export async function login(password: string): Promise<void> {
-  await postJson("/api/login", { password });
-}
-
-export async function createClerkSession(token: string): Promise<void> {
-  await postJson("/api/clerk/session", { token });
+export async function login(password: string): Promise<AuthState> {
+  const body = await postJson<AuthState & { token: string }>("/api/login", { password }, { skipAuth: true });
+  setAuthToken(body.token);
+  return body;
 }
 
 export async function logout(): Promise<void> {
-  await postJson("/api/logout", {});
+  await postJson("/api/logout", {}).catch(() => undefined);
+  clearAuthToken();
 }
 
 export async function getStatus(): Promise<ServerStatus> {
@@ -63,8 +64,8 @@ export async function createRepository(parentPath: string, name: string): Promis
 export async function uploadAttachment(file: File): Promise<UploadedAttachment> {
   const response = await fetch("/api/uploads", {
     method: "POST",
-    credentials: "same-origin",
     headers: {
+      ...authHeaders(),
       "Content-Type": file.type || "application/octet-stream",
       "X-File-Name": encodeURIComponent(file.name)
     },
@@ -79,24 +80,38 @@ export async function readReferencedFile(reference: FileReference): Promise<File
   return body.file;
 }
 
-export function referencedFileDownloadUrl(reference: FileReference): string {
-  return fileQueryUrl("/api/files/download", reference);
+export async function fetchReferencedFileBlob(reference: FileReference, raw = false): Promise<Blob> {
+  const response = await fetch(fileQueryUrl(raw ? "/api/files/raw" : "/api/files/download", reference), {
+    headers: authHeaders()
+  });
+  await assertResponse(response);
+  return response.blob();
 }
 
-export function referencedFileRawUrl(reference: FileReference): string {
-  return fileQueryUrl("/api/files/raw", reference);
+export async function downloadReferencedFile(reference: FileReference, fileName: string): Promise<void> {
+  const blob = await fetchReferencedFileBlob(reference);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
-export function openEventStream(onEvent: (event: ServerEvent) => void, onHello: (events: ServerEvent[]) => void): EventSource {
-  const source = new EventSource("/api/events");
-  source.addEventListener("hello", (event) => {
-    const payload = JSON.parse((event as MessageEvent).data) as { history?: ServerEvent[] };
-    onHello(payload.history ?? []);
-  });
-  source.addEventListener("message", (event) => {
-    onEvent(JSON.parse((event as MessageEvent).data) as ServerEvent);
-  });
-  return source;
+export type AuthEventStream = {
+  close: () => void;
+  onerror?: () => void;
+};
+
+export function openEventStream(onEvent: (event: ServerEvent) => void, onHello: (events: ServerEvent[]) => void): AuthEventStream {
+  const controller = new AbortController();
+  const stream: AuthEventStream = {
+    close: () => controller.abort()
+  };
+  void readEventStream(controller, stream, onEvent, onHello);
+  return stream;
 }
 
 function fileQueryUrl(baseUrl: string, reference: FileReference): string {
@@ -108,15 +123,14 @@ function fileQueryUrl(baseUrl: string, reference: FileReference): string {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { credentials: "same-origin" });
+  const response = await fetch(url, { headers: authHeaders() });
   return parseResponse<T>(response);
 }
 
-async function postJson<T = unknown>(url: string, payload: unknown): Promise<T> {
+async function postJson<T = unknown>(url: string, payload: unknown, options: { skipAuth?: boolean } = {}): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...(!options.skipAuth ? authHeaders() : {}), "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   return parseResponse<T>(response);
@@ -125,17 +139,104 @@ async function postJson<T = unknown>(url: string, payload: unknown): Promise<T> 
 async function deleteJson<T = unknown>(url: string): Promise<T> {
   const response = await fetch(url, {
     method: "DELETE",
-    credentials: "same-origin"
+    headers: authHeaders()
   });
   return parseResponse<T>(response);
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const body = (await response.json().catch(() => ({}))) as { error?: string; data?: unknown };
-  if (!response.ok) {
-    const error = new Error(body.error || `Request failed: ${response.status}`) as Error & { data?: unknown };
-    error.data = body.data;
-    throw error;
+  await assertResponse(response);
+  return response.json() as Promise<T>;
+}
+
+async function assertResponse(response: Response): Promise<void> {
+  if (response.status === 401) {
+    clearAuthToken();
   }
-  return body as T;
+  if (response.ok) {
+    return;
+  }
+  const body = (await response.json().catch(() => ({}))) as { error?: string; data?: unknown };
+  const error = new Error(body.error || `Request failed: ${response.status}`) as Error & { data?: unknown };
+  error.data = body.data;
+  throw error;
+}
+
+async function readEventStream(
+  controller: AbortController,
+  stream: AuthEventStream,
+  onEvent: (event: ServerEvent) => void,
+  onHello: (events: ServerEvent[]) => void
+): Promise<void> {
+  try {
+    const response = await fetch("/api/events", {
+      headers: authHeaders(),
+      signal: controller.signal
+    });
+    await assertResponse(response);
+    if (!response.body) {
+      throw new Error("Event stream response did not include a body.");
+    }
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    while (!controller.signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += value;
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        handleSseBlock(part, onEvent, onHello);
+      }
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      stream.onerror?.();
+    }
+  }
+}
+
+function handleSseBlock(block: string, onEvent: (event: ServerEvent) => void, onHello: (events: ServerEvent[]) => void): void {
+  let eventName = "message";
+  const dataLines: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (!dataLines.length) {
+    return;
+  }
+  const data = dataLines.join("\n");
+  if (eventName === "hello") {
+    const payload = JSON.parse(data) as { history?: ServerEvent[] };
+    onHello(payload.history ?? []);
+    return;
+  }
+  onEvent(JSON.parse(data) as ServerEvent);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = authToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function authToken(): string {
+  return typeof window === "undefined" ? "" : window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+}
+
+function setAuthToken(token: string): void {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  }
+}
+
+function clearAuthToken(): void {
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  }
 }

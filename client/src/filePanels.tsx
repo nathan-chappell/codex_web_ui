@@ -1,10 +1,10 @@
 import { ChevronUp, FileText, Folder, RefreshCw, Search, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { referencedFileDownloadUrl, referencedFileRawUrl } from "./api";
+import { downloadReferencedFile, fetchReferencedFileBlob } from "./api";
 import type { FileExplorer, FileExplorerEntry, FilePreview, FileReference } from "./types";
 
 export function FileExplorerModal({
@@ -146,9 +146,9 @@ export function FileViewerModal({ file, reference, onClose }: { file: FilePrevie
           {renderFilePreview(file, reference)}
         </div>
         <footer className="modal-actions">
-          <a className="ghost-button" href={referencedFileDownloadUrl(reference)}>
+          <button className="ghost-button" type="button" onClick={() => void downloadReferencedFile(reference, file.name)}>
             Download
-          </a>
+          </button>
           <button className="primary-button" type="button" onClick={onClose}>Done</button>
         </footer>
       </section>
@@ -159,13 +159,13 @@ export function FileViewerModal({ file, reference, onClose }: { file: FilePrevie
 function renderFilePreview(file: FilePreview, reference: FileReference) {
   const content = file.content ?? "";
   if (file.kind === "image") {
-    return <img className="file-image-preview" src={referencedFileRawUrl(reference)} alt={file.name} />;
+    return <AuthenticatedMediaPreview className="file-image-preview" file={file} reference={reference} type="image" />;
   }
   if (file.kind === "pdf") {
-    return <iframe className="file-pdf-preview" src={referencedFileRawUrl(reference)} title={file.name} />;
+    return <AuthenticatedMediaPreview className="file-pdf-preview" file={file} reference={reference} type="pdf" />;
   }
   if (file.kind === "video") {
-    return <video className="file-video-preview" src={referencedFileRawUrl(reference)} controls playsInline preload="metadata" />;
+    return <AuthenticatedMediaPreview className="file-video-preview" file={file} reference={reference} type="video" />;
   }
   if (file.kind === "json") {
     return <pre className="json-block file-preview-block">{prettyJson(content)}</pre>;
@@ -185,6 +185,61 @@ function renderFilePreview(file: FilePreview, reference: FileReference) {
     );
   }
   return <pre className="code-block file-preview-block">{content}</pre>;
+}
+
+function AuthenticatedMediaPreview({
+  className,
+  file,
+  reference,
+  type
+}: {
+  className: string;
+  file: FilePreview;
+  reference: FileReference;
+  type: "image" | "pdf" | "video";
+}) {
+  const [objectUrl, setObjectUrl] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    let nextUrl = "";
+    setObjectUrl("");
+    setError("");
+    fetchReferencedFileBlob(reference, true)
+      .then((blob) => {
+        if (!active) {
+          return;
+        }
+        nextUrl = URL.createObjectURL(blob);
+        setObjectUrl(nextUrl);
+      })
+      .catch((err) => {
+        if (active) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      active = false;
+      if (nextUrl) {
+        URL.revokeObjectURL(nextUrl);
+      }
+    };
+  }, [reference.cwd, reference.path]);
+
+  if (error) {
+    return <p className="error-text empty-pad">{error}</p>;
+  }
+  if (!objectUrl) {
+    return <p className="muted empty-pad"><span className="spinner" /> Loading preview</p>;
+  }
+  if (type === "image") {
+    return <img className={className} src={objectUrl} alt={file.name} />;
+  }
+  if (type === "pdf") {
+    return <iframe className={className} src={objectUrl} title={file.name} />;
+  }
+  return <video className={className} src={objectUrl} controls playsInline preload="metadata" />;
 }
 
 function prettyJson(content: string): string {

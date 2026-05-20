@@ -157,13 +157,6 @@ textarea {
   max-width: min(70vw, 980px);
 }
 
-.clerk-login-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .auth-error-panel {
   border-color: #ef8d8d;
 }

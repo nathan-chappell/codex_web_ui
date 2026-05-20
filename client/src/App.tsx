@@ -25,21 +25,20 @@ import remarkGfm from "remark-gfm";
 import {
   browseFiles,
   browseRepositories,
-  createClerkSession,
   createRepository,
   deleteThreadLog,
+  downloadReferencedFile,
   getAuth,
   getStatus,
   login,
   logout,
   openEventStream,
   readReferencedFile,
-  referencedFileDownloadUrl,
   restartServer,
   rpc,
   uploadAttachment
 } from "./api";
-import { ClerkLoginPanel, LogoutButton } from "./authControls";
+import type { AuthEventStream } from "./api";
 import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
 import type { AuthState, FileExplorer, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
 
@@ -118,7 +117,7 @@ export default function App() {
   const [fileExplorerLoading, setFileExplorerLoading] = useState(false);
   const [loadingThreadByPane, setLoadingThreadByPane] = useState<Record<number, string>>({});
 
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventSourceRef = useRef<AuthEventStream | null>(null);
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
   const listTimerRef = useRef<number | null>(null);
   const sessionsLoadSeqRef = useRef(0);
@@ -260,15 +259,6 @@ export default function App() {
   if (!authenticated) {
     return (
       <main className="login-screen">
-        {authInfo?.mode === "clerk" ? (
-          <ClerkLoginPanel
-            error={loginError}
-            onError={setLoginError}
-            onAuthenticated={async () => {
-              applyAuth(await getAuth());
-            }}
-          />
-        ) : (
         <form className="login-panel" onSubmit={handleLogin}>
           <div>
             <p className="eyebrow">Remote control</p>
@@ -283,7 +273,6 @@ export default function App() {
           </button>
           <p className="error-text">{loginError}</p>
         </form>
-        )}
       </main>
     );
   }
@@ -309,7 +298,9 @@ export default function App() {
           <button className="ghost-button" type="button" onClick={handleRestart}>
             <RefreshCw size={16} /> Reconnect
           </button>
-          <LogoutButton authMode={authInfo?.mode ?? "password"} onLogout={handleLogout} />
+          <button className="ghost-button" type="button" onClick={() => void handleLogout()}>
+            Logout
+          </button>
         </div>
       </header>
 
@@ -570,9 +561,9 @@ export default function App() {
     event.preventDefault();
     setLoginError("");
     try {
-      await login(password);
+      const nextAuth = await login(password);
       setPassword("");
-      applyAuth(await getAuth());
+      applyAuth(nextAuth);
     } catch (error) {
       setLoginError(messageFromError(error));
     }
@@ -654,7 +645,7 @@ export default function App() {
     if (cached) {
       setFileViewerLoading(null);
       if (!cached.previewable) {
-        window.location.assign(referencedFileDownloadUrl(reference));
+        await downloadReferencedFile(reference, cached.name);
         return;
       }
       setFileViewer({ reference, file: cached });
@@ -671,7 +662,7 @@ export default function App() {
       setFilePreviewCache((current) => ({ ...current, [key]: file }));
       if (!file.previewable) {
         setFileViewerLoading(null);
-        window.location.assign(referencedFileDownloadUrl(reference));
+        await downloadReferencedFile(reference, file.name);
         return;
       }
       setFileViewerLoading(null);

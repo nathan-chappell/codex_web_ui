@@ -19,8 +19,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@clerk/backend": "^3.4.9",
-    "@clerk/react": "^6.6.4",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^5.1.1",
     "lucide-react": "^0.561.0",

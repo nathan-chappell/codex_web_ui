@@ -1,6 +1,6 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-export type AuthMode = "password" | "clerk";
+export type AuthMode = "password";
 
 export interface AuthUser {
   id: string;
@@ -14,6 +14,7 @@ export interface AuthState {
   mode: AuthMode;
   warning?: string | null;
   user?: AuthUser | null;
+  tokenExpiresAt?: number | null;
 }
 
 export interface Thread {

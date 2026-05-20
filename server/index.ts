@@ -5,7 +5,6 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { createClerkClient, verifyToken } from "@clerk/backend";
 import { CodexBridge } from "./codexBridge.js";
 import { EventHub } from "./eventHub.js";
 import { SessionLogStore } from "./logStore.js";
@@ -20,19 +19,25 @@ loadEnvFile(path.join(projectRoot, ".env"));
 const PORT = Number(process.env.PORT || 4545);
 const HOST = process.env.HOST || "127.0.0.1";
 const PASSWORD = process.env.CODEX_WEB_UI_PASSWORD || "";
-const SESSION_COOKIE = "codex_web_ui_session";
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || "";
-const CLERK_PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY || "";
-const CLERK_JWT_KEY = process.env.CLERK_JWT_KEY || "";
-const CLERK_AUTHORIZED_PARTIES = parseCsvEnv(process.env.CLERK_AUTHORIZED_PARTIES);
-const AUTH_MODE: AuthMode = CLERK_SECRET_KEY && CLERK_PUBLISHABLE_KEY ? "clerk" : "password";
-const AUTH_WARNING = AUTH_MODE === "password" && !PASSWORD
-  ? "Set CODEX_WEB_UI_PASSWORD or Clerk credentials before exposing this server."
+const AUTH_MODE: AuthMode = "password";
+const AUTH_TOKEN_TTL_MS = 4 * 60 * 60 * 1000;
+const AUTH_TOKEN_ISSUER = "codex-web-ui";
+const AUTH_TOKEN_SECRET = process.env.CODEX_WEB_UI_AUTH_SECRET || PASSWORD;
+const AUTH_WARNING = !PASSWORD
+  ? "Set CODEX_WEB_UI_PASSWORD before exposing this server."
   : null;
-const clerkClient = AUTH_MODE === "clerk"
-  ? createClerkClient({ secretKey: CLERK_SECRET_KEY, publishableKey: CLERK_PUBLISHABLE_KEY })
-  : null;
+const CORS_ALLOWED_ORIGINS = parseCsvEnv(process.env.CODEX_WEB_UI_ALLOWED_ORIGINS);
+const CORS_ALLOWED_HEADERS = "Authorization, Content-Type, X-File-Name";
+const CORS_ALLOWED_METHODS = "GET, HEAD, POST, DELETE, OPTIONS";
+const CORS_MAX_AGE_SECONDS = "600";
+const AUTH_USER: AuthUser = { id: "password", email: null, name: "Password user", role: "admin" };
+const UNAUTHENTICATED_AUTH_STATE = {
+  authenticated: false,
+  mode: AUTH_MODE,
+  warning: AUTH_WARNING,
+  user: null,
+  tokenExpiresAt: null
+};
 
 const logs = new SessionLogStore(process.env.CODEX_WEB_UI_DATA_DIR || path.join(projectRoot, "data"));
 const hub = new EventHub();
@@ -49,11 +54,11 @@ const bridge = new CodexBridge(
   logs
 );
 
-type AuthMode = "password" | "clerk";
+type AuthMode = "password";
 type AuthUser = { id: string; email: string | null; name: string | null; role: string };
-type AppSession = { createdAt: number; mode: AuthMode; user: AuthUser | null };
-
-const sessions = new Map<string, AppSession>();
+type AppSession = { expiresAt: number; mode: AuthMode; user: AuthUser | null };
+type AuthState = { authenticated: boolean; mode: AuthMode; warning: string | null; user: AuthUser | null; tokenExpiresAt: number | null };
+type JwtClaims = { iss: string; sub: string; role: string; iat: number; exp: number };
 
 const mimeTypes: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -86,6 +91,15 @@ await logs.ensure();
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const cors = applyCorsHeaders(req, res, url);
+    if (req.method === "OPTIONS") {
+      return cors.allowed
+        ? sendNoContent(res)
+        : sendJson(res, 403, { ok: false, error: "Origin is not allowed" });
+    }
+    if (url.pathname.startsWith("/api/") && !cors.allowed) {
+      return sendJson(res, 403, { ok: false, error: "Origin is not allowed" });
+    }
     const startedAt = Date.now();
     if (shouldLogHttpRequest(url.pathname)) {
       res.once("finish", () => {
@@ -103,37 +117,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/login" && req.method === "POST") {
-      if (AUTH_MODE !== "password") {
-        return sendJson(res, 400, { ok: false, error: "Password login is not enabled" });
-      }
       const body = await readJsonBody(req);
       if (!safePasswordEquals(typeof body.password === "string" ? body.password : "")) {
         return sendJson(res, 401, { ok: false, error: "Invalid password" });
       }
-      const token = crypto.randomBytes(32).toString("base64url");
-      sessions.set(token, { createdAt: Date.now(), mode: "password", user: null });
-      res.setHeader("Set-Cookie", makeCookie(token));
-      return sendJson(res, 200, { ok: true });
-    }
-
-    if (url.pathname === "/api/clerk/session" && req.method === "POST") {
-      if (AUTH_MODE !== "clerk") {
-        return sendJson(res, 400, { ok: false, error: "Clerk login is not enabled" });
-      }
-      const body = await readJsonBody(req);
-      const clerkUser = await authenticateClerkToken(typeof body.token === "string" ? body.token : "");
-      const token = crypto.randomBytes(32).toString("base64url");
-      sessions.set(token, { createdAt: Date.now(), mode: "clerk", user: clerkUser });
-      res.setHeader("Set-Cookie", makeCookie(token));
-      return sendJson(res, 200, { ok: true });
+      const { token, expiresAt } = createAuthToken(AUTH_USER);
+      return sendJson(res, 200, { ok: true, token, expiresAt, ...authStateFromSession({ expiresAt, mode: AUTH_MODE, user: AUTH_USER }) });
     }
 
     if (url.pathname === "/api/logout" && req.method === "POST") {
-      const token = getSessionToken(req);
-      if (token) {
-        sessions.delete(token);
-      }
-      res.setHeader("Set-Cookie", clearCookie());
       return sendJson(res, 200, { ok: true });
     }
 
@@ -275,9 +267,68 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function numberValue(value: unknown): number | null {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 async function shutdown(): Promise<void> {
   await bridge.stop();
   process.exit(0);
+}
+
+function applyCorsHeaders(req: IncomingMessage, res: ServerResponse, url: URL): { allowed: boolean } {
+  const origin = headerValue(req.headers.origin).trim();
+  if (!origin) {
+    return { allowed: true };
+  }
+  if (!isAllowedOrigin(req, url, origin)) {
+    return { allowed: false };
+  }
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Methods", CORS_ALLOWED_METHODS);
+  res.setHeader("Access-Control-Allow-Headers", CORS_ALLOWED_HEADERS);
+  res.setHeader("Access-Control-Max-Age", CORS_MAX_AGE_SECONDS);
+  res.setHeader("Vary", "Origin");
+  return { allowed: true };
+}
+
+function isAllowedOrigin(req: IncomingMessage, url: URL, origin: string): boolean {
+  if (isSameOrigin(req, url, origin)) {
+    return true;
+  }
+  return CORS_ALLOWED_ORIGINS.some((pattern) => originMatchesPattern(origin, pattern));
+}
+
+function isSameOrigin(req: IncomingMessage, url: URL, origin: string): boolean {
+  try {
+    const originUrl = new URL(origin);
+    const protocol = headerValue(req.headers["x-forwarded-proto"]) || url.protocol.replace(":", "");
+    const host = headerValue(req.headers["x-forwarded-host"]) || headerValue(req.headers.host);
+    return originUrl.protocol === `${protocol}:` && originUrl.host === host;
+  } catch {
+    return false;
+  }
+}
+
+function originMatchesPattern(origin: string, pattern: string): boolean {
+  try {
+    const originUrl = new URL(origin);
+    const match = /^(https?):\/\/([^/:]+|\*)(?::(\*|\d+))?$/.exec(pattern.trim());
+    if (!match) {
+      return origin === pattern;
+    }
+    const [, protocol, hostname, port] = match;
+    if (originUrl.protocol !== `${protocol}:`) {
+      return false;
+    }
+    if (hostname !== "*" && hostname.toLowerCase() !== originUrl.hostname.toLowerCase()) {
+      return false;
+    }
+    return port === "*" || (port ? port === originUrl.port : !originUrl.port);
+  } catch {
+    return origin === pattern;
+  }
 }
 
 function isAuthenticated(req: IncomingMessage): boolean {
@@ -285,58 +336,114 @@ function isAuthenticated(req: IncomingMessage): boolean {
 }
 
 function currentSession(req: IncomingMessage): AppSession | null {
-  const token = getSessionToken(req);
+  const token = getBearerToken(req);
   if (!token) {
     return null;
   }
-  const session = sessions.get(token);
-  if (!session) {
+  const claims = verifyAuthToken(token);
+  if (!claims) {
     return null;
   }
-  if (Date.now() - session.createdAt > SESSION_TTL_MS) {
-    sessions.delete(token);
-    return null;
-  }
-  if (session.mode !== AUTH_MODE) {
-    sessions.delete(token);
-    return null;
-  }
-  return session;
+  return { expiresAt: claims.exp * 1000, mode: AUTH_MODE, user: { ...AUTH_USER, role: claims.role || AUTH_USER.role } };
 }
 
-function authState(req: IncomingMessage): { authenticated: boolean; mode: AuthMode; warning: string | null; user: AuthUser | null } {
+function authState(req: IncomingMessage): AuthState {
   const session = currentSession(req);
+  return session ? authStateFromSession(session) : UNAUTHENTICATED_AUTH_STATE;
+}
+
+function authStateFromSession(session: AppSession): AuthState {
   return {
-    authenticated: Boolean(session),
-    mode: AUTH_MODE,
+    authenticated: true,
+    mode: session.mode,
     warning: AUTH_WARNING,
-    user: session?.user ?? null
+    user: session.user,
+    tokenExpiresAt: session.expiresAt
   };
 }
 
-function getSessionToken(req: IncomingMessage): string {
-  const cookies = parseCookies(req.headers.cookie || "");
-  return cookies[SESSION_COOKIE] || "";
+function getBearerToken(req: IncomingMessage): string {
+  const header = headerValue(req.headers.authorization);
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match?.[1]?.trim() || "";
 }
 
-function parseCookies(header: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  for (const part of header.split(";")) {
-    const [rawKey, ...rawValue] = part.trim().split("=");
-    if (rawKey) {
-      cookies[rawKey] = decodeURIComponent(rawValue.join("="));
-    }
+function createAuthToken(user: AuthUser): { token: string; expiresAt: number } {
+  if (!AUTH_TOKEN_SECRET) {
+    throw httpError(500, "CODEX_WEB_UI_PASSWORD is required before login is available.");
   }
-  return cookies;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expiresAtSeconds = nowSeconds + Math.floor(AUTH_TOKEN_TTL_MS / 1000);
+  const claims: JwtClaims = {
+    iss: AUTH_TOKEN_ISSUER,
+    sub: user.id,
+    role: user.role,
+    iat: nowSeconds,
+    exp: expiresAtSeconds
+  };
+  return {
+    token: signJwt(claims),
+    expiresAt: expiresAtSeconds * 1000
+  };
 }
 
-function makeCookie(token: string): string {
-  const secure = process.env.COOKIE_SECURE === "1" ? "; Secure" : "";
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure}`;
+function signJwt(claims: JwtClaims): string {
+  const header = base64UrlJson({ alg: "HS256", typ: "JWT" });
+  const payload = base64UrlJson(claims);
+  const signature = hmacBase64Url(`${header}.${payload}`);
+  return `${header}.${payload}.${signature}`;
 }
 
-function clearCookie(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+function verifyAuthToken(token: string): JwtClaims | null {
+  if (!AUTH_TOKEN_SECRET) {
+    return null;
+  }
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return null;
+  }
+  const [header, payload, signature] = parts;
+  if (!timingSafeStringEquals(signature, hmacBase64Url(`${header}.${payload}`))) {
+    return null;
+  }
+  const parsedHeader = parseJwtPart(header);
+  const claims = parseJwtPart(payload);
+  if (parsedHeader.alg !== "HS256" || parsedHeader.typ !== "JWT") {
+    return null;
+  }
+  const exp = numberValue(claims.exp);
+  if (claims.iss !== AUTH_TOKEN_ISSUER || claims.sub !== AUTH_USER.id || !exp || Date.now() >= exp * 1000) {
+    return null;
+  }
+  return {
+    iss: AUTH_TOKEN_ISSUER,
+    sub: AUTH_USER.id,
+    role: typeof claims.role === "string" ? claims.role : AUTH_USER.role,
+    iat: numberValue(claims.iat) ?? 0,
+    exp
+  };
+}
+
+function base64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function parseJwtPart(value: string): Record<string, unknown> {
+  try {
+    return asRecord(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
+  } catch {
+    return {};
+  }
+}
+
+function hmacBase64Url(value: string): string {
+  return crypto.createHmac("sha256", AUTH_TOKEN_SECRET).update(value).digest("base64url");
+}
+
+function timingSafeStringEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function shouldLogHttpRequest(pathname: string): boolean {
@@ -347,44 +454,7 @@ function safePasswordEquals(value: string): boolean {
   if (!PASSWORD) {
     return false;
   }
-  const provided = Buffer.from(value);
-  const expected = Buffer.from(PASSWORD);
-  if (provided.length !== expected.length) {
-    return false;
-  }
-  return crypto.timingSafeEqual(provided, expected);
-}
-
-async function authenticateClerkToken(token: string): Promise<AuthUser> {
-  if (!token || !clerkClient) {
-    throw httpError(401, "Missing Clerk bearer token.");
-  }
-  const payload = await verifyToken(token, {
-    secretKey: CLERK_SECRET_KEY,
-    jwtKey: CLERK_JWT_KEY || undefined,
-    authorizedParties: CLERK_AUTHORIZED_PARTIES.length ? CLERK_AUTHORIZED_PARTIES : undefined
-  }).catch(() => {
-    throw httpError(401, "Invalid Clerk session.");
-  });
-  const clerkUserId = String(payload.sub || "").trim();
-  if (!clerkUserId) {
-    throw httpError(401, "Clerk session did not include a user id.");
-  }
-
-  const user = await clerkClient.users.getUser(clerkUserId);
-  const publicMetadata = asRecord(user.publicMetadata);
-  if (publicMetadata.active !== true) {
-    throw httpError(403, "This Clerk account is not active for the app.");
-  }
-  const role = publicMetadata.role === "admin" ? "admin" : "user";
-  const email = primaryEmailForClerkUser(user);
-  const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || email;
-  return { id: user.id, email, name: name || null, role };
-}
-
-function primaryEmailForClerkUser(user: { primaryEmailAddressId: string | null; emailAddresses: { id: string; emailAddress: string }[] }): string | null {
-  const primary = user.emailAddresses.find((item) => item.id === user.primaryEmailAddressId) ?? user.emailAddresses[0];
-  return primary?.emailAddress?.trim().toLowerCase() || null;
+  return timingSafeStringEquals(value, PASSWORD);
 }
 
 function httpError(statusCode: number, message: string): Error & { statusCode: number } {
@@ -818,6 +888,13 @@ function sendJson(res: ServerResponse, statusCode: number, payload: unknown): vo
     "Cache-Control": "no-store"
   });
   res.end(JSON.stringify(payload));
+}
+
+function sendNoContent(res: ServerResponse): void {
+  res.writeHead(204, {
+    "Cache-Control": "no-store"
+  });
+  res.end();
 }
 
 function serveStatic(requestPath: string, res: ServerResponse, headOnly: boolean): void {

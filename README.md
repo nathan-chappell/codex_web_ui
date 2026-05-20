@@ -14,10 +14,10 @@ npm start
 
 Open `http://127.0.0.1:4545`.
 
-The server is always protected by either Clerk or password auth. Set a strong
-`CODEX_WEB_UI_PASSWORD` before starting the backend unless Clerk is configured;
-with neither configured, the password login remains locked and API routes stay
-unauthorized.
+The server is protected by password auth. Login exchanges
+`CODEX_WEB_UI_PASSWORD` for a 4-hour bearer JWT stored by the browser in
+localStorage and sent as an `Authorization` header. With no password configured,
+login remains locked and API routes stay unauthorized.
 
 For development, run the backend, Vite, and a sibling Codex app-server process:
 
@@ -60,6 +60,8 @@ Useful environment variables:
 
 ```bash
 CODEX_WEB_UI_PASSWORD='change-me' PORT=4545 HOST=0.0.0.0 npm start
+CODEX_WEB_UI_ALLOWED_ORIGINS='http://localhost:*,http://127.0.0.1:*,http://192.168.1.66:*,https://manifesto-tank-reliance.ngrok-free.dev' npm start
+CODEX_WEB_UI_AUTH_SECRET='separate-token-signing-secret' npm start
 CODEX_COMMAND=codex CODEX_CWD=/path/to/project npm start
 CODEX_MODEL=gpt-5.5 CODEX_REASONING_EFFORT=high npm start
 CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
@@ -81,4 +83,4 @@ The backend loads `.env` from the project root before reading these variables. S
 - Previews referenced text, code, Markdown, JSON, images, PDFs, and browser-playable video files.
 - Shows app-server status and account rate-limit usage.
 
-The password gate is intentionally simple and server-side. For real internet exposure, put this behind HTTPS and set a strong `CODEX_WEB_UI_PASSWORD` or Clerk credentials.
+The password gate is intentionally simple and server-side. For real internet exposure, put this behind HTTPS, set a strong `CODEX_WEB_UI_PASSWORD`, and restrict `CODEX_WEB_UI_ALLOWED_ORIGINS` to origins you actually use.
