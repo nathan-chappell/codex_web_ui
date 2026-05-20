@@ -58,6 +58,8 @@ type StoredLayout = {
   activePaneIndex?: number;
   mobilePane?: MobilePane;
   openThreadIds?: (string | null)[];
+  recentOnly?: boolean;
+  showArchived?: boolean;
   sidebarWidth?: number;
   threadPaneCount?: ThreadPaneCount;
 };
@@ -96,8 +98,8 @@ export default function App() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
   const [sidebarWidth, setSidebarWidth] = useState(() => clampNumber(initialStoredLayout.sidebarWidth, 240, 520, 330));
-  const [showArchived, setShowArchived] = useState(false);
-  const [recentOnly, setRecentOnly] = useState(false);
+  const [showArchived, setShowArchived] = useState(() => initialStoredLayout.showArchived ?? false);
+  const [recentOnly, setRecentOnly] = useState(() => initialStoredLayout.recentOnly ?? false);
   const [searchTerm, setSearchTerm] = useState("");
   const [mobilePane, setMobilePane] = useState<MobilePane>(() => initialStoredLayout.mobilePane ?? "sessions");
   const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(() => initialStoredLayout.threadPaneCount ?? 1);
@@ -238,10 +240,12 @@ export default function App() {
       activePaneIndex,
       mobilePane,
       openThreadIds,
+      recentOnly,
+      showArchived,
       sidebarWidth,
       threadPaneCount
     }, layoutWriteTimerRef);
-  }, [activePaneIndex, mobilePane, openThreadIds, sidebarWidth, threadPaneCount]);
+  }, [activePaneIndex, mobilePane, openThreadIds, recentOnly, showArchived, sidebarWidth, threadPaneCount]);
 
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
@@ -2638,6 +2642,8 @@ function writeStoredLayout(layout: StoredLayout, timerRef?: RefObject<number | n
       activePaneIndex: clampNumber(layout.activePaneIndex, 0, (layout.threadPaneCount ?? 1) - 1, 0),
       mobilePane: layout.mobilePane,
       openThreadIds: initialOpenThreadIds(layout),
+      recentOnly: layout.recentOnly ?? false,
+      showArchived: layout.showArchived ?? false,
       sidebarWidth: clampNumber(layout.sidebarWidth, 240, 520, 330),
       threadPaneCount: layout.threadPaneCount
     }));
@@ -2656,6 +2662,8 @@ function parseStoredLayout(value: unknown): StoredLayout {
     openThreadIds: Array.isArray(record.openThreadIds)
       ? record.openThreadIds.map((item) => typeof item === "string" && item ? item : null)
       : undefined,
+    recentOnly: typeof record.recentOnly === "boolean" ? record.recentOnly : undefined,
+    showArchived: typeof record.showArchived === "boolean" ? record.showArchived : undefined,
     sidebarWidth: numberValue(record.sidebarWidth) ?? undefined,
     threadPaneCount
   };
