@@ -6,8 +6,8 @@
   --line: #d8e0e3;
   --text: #172026;
   --muted-text: #65727b;
-  --accent: #0c7c86;
-  --accent-strong: #075d68;
+  --app-accent: #0c7c86;
+  --app-accent-strong: #075d68;
   --green: #237a4b;
   --amber: #9a6400;
   --red: #b73535;
@@ -88,7 +88,7 @@ textarea {
 
 .eyebrow {
   margin: 0 0 6px;
-  color: var(--accent);
+  color: var(--app-accent);
   font-size: 12px;
   font-weight: 750;
   text-transform: uppercase;
@@ -220,7 +220,7 @@ textarea {
 
 .sidebar-resizer:hover,
 .sidebar-resizer:active {
-  background: var(--accent);
+  background: var(--app-accent);
 }
 
 .panel-heading {
@@ -1063,7 +1063,7 @@ textarea {
   display: inline;
   padding: 0;
   background: transparent;
-  color: var(--accent-strong);
+  color: var(--app-accent-strong);
   font: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -1286,12 +1286,12 @@ textarea {
 }
 
 .primary-button {
-  background: var(--accent);
+  background: var(--app-accent);
   color: #fff;
 }
 
 .primary-button:hover {
-  background: var(--accent-strong);
+  background: var(--app-accent-strong);
 }
 
 .secondary-button {
@@ -1645,7 +1645,7 @@ textarea {
   height: 16px;
   display: inline-block;
   border: 2px solid #cbd8dc;
-  border-top-color: var(--accent);
+  border-top-color: var(--app-accent);
   border-radius: 999px;
   animation: spin 0.8s linear infinite;
   flex: 0 0 auto;
@@ -1820,7 +1820,7 @@ textarea {
 }
 
 .directory-row.git-repo > button:first-child {
-  color: var(--accent-strong);
+  color: var(--app-accent-strong);
   font-weight: 750;
 }
 
