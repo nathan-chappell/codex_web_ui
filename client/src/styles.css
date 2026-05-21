@@ -1105,6 +1105,9 @@ textarea {
 .composer [data-slot="input-group"] {
   display: grid;
   gap: 12px;
+  height: auto;
+  align-items: stretch;
+  overflow: visible;
   border: 0;
   border-radius: 0;
   background: transparent;
