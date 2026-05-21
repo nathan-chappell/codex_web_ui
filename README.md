@@ -2,7 +2,7 @@
 
 TypeScript web UI for controlling `codex app-server` remotely.
 
-The backend is a small Node HTTP/SSE server. The frontend is a Next/Tailwind React app with shadcn/ui and AI Elements components. `npm run build:client` exports it statically, copies it into `dist/public`, and the backend serves that artifact.
+The backend is a small Node HTTP/SSE server. The frontend is a Next/Tailwind React app with shadcn/ui and AI Elements components. `next build` exports the frontend into `out/`, and the backend serves that artifact.
 
 ## Run
 
@@ -19,33 +19,37 @@ The server is protected by password auth. Login exchanges
 localStorage and sent as an `Authorization` header. With no password configured,
 login remains locked and API routes stay unauthorized.
 
-For development, run the backend, Next dev server, and a sibling Codex app-server process:
+For frontend-only development, run Next directly:
 
 ```bash
-CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev
+npm run dev
 ```
 
-In dev mode, the backend connects directly to the sibling app-server over
-`CODEX_APP_SERVER_SOCKET` instead of owning the app-server process. That lets
-backend watch restarts reconnect without terminating active Codex work.
+For the full local service, run the Codex app-server sidecar and backend as
+plain shell processes. This keeps the Codex app-server out of npm lifecycle
+watchers and leaves PID/log files under `tmp/`.
 
-For local watch mode without the Next dev server, rebuild the exported frontend
-on change and restart the backend on server changes:
+Start the sidecar:
 
 ```bash
-CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 PORT=4545 npm run watch
+mkdir -p tmp
+export CODEX_APP_SERVER_SOCKET="$PWD/tmp/codex-app-server.sock"
+rm -f "$CODEX_APP_SERVER_SOCKET"
+nohup codex app-server --listen "unix://$CODEX_APP_SERVER_SOCKET" > tmp/codex-app-server.log 2>&1 &
+echo $! > tmp/codex-app-server.pid
 ```
 
-This serves the rebuilt frontend from `dist/public`, keeps a sibling
-`codex app-server` process running, and reconnects the backend to the socket
-after backend restarts.
-
-You can also run the pieces manually:
+Then build and run the backend against that socket:
 
 ```bash
-CODEX_APP_SERVER_SOCKET=./tmp/codex-app-server.sock npm run codex:app-server
-CODEX_APP_SERVER_SOCKET=./tmp/codex-app-server.sock CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev:api
-npm run dev:client
+npm run build
+CODEX_APP_SERVER_SOCKET="$PWD/tmp/codex-app-server.sock" CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 PORT=4545 npm start
+```
+
+To stop the sidecar:
+
+```bash
+kill "$(cat tmp/codex-app-server.pid)"
 ```
 
 To expose the running server through ngrok:

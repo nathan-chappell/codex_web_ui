@@ -11,7 +11,7 @@ import { SessionLogStore } from "./logStore.js";
 import type { JsonValue } from "./types.js";
 
 const projectRoot = process.cwd();
-const staticDir = path.join(projectRoot, "dist/public");
+const staticDir = path.join(projectRoot, "out");
 const homeDir = os.homedir();
 
 loadEnvFile(path.join(projectRoot, ".env"));
