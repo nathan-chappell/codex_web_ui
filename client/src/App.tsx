@@ -39,7 +39,6 @@ import {
   PromptInputBody,
   PromptInputButton,
   PromptInputFooter,
-  PromptInputTextarea,
   PromptInputTools
 } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
@@ -2567,7 +2566,7 @@ const Composer = memo(function Composer({
         </div>
       </div>
       <PromptInputBody className="composer-body">
-        <PromptInputTextarea ref={textareaRef} rows={5} placeholder="Send a new message or steer the active turn" />
+        <textarea ref={textareaRef} name="message" rows={5} placeholder="Send a new message or steer the active turn" />
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <PromptInputFooter className="composer-bottom">
           <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>

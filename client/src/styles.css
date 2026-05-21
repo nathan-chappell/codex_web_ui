@@ -1184,7 +1184,7 @@ textarea {
   min-height: 118px;
 }
 
-.composer textarea[data-slot="input-group-control"] {
+.composer textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
