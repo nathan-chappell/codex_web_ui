@@ -20,6 +20,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
 import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
@@ -95,6 +96,10 @@ const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
 const mobilePanes: MobilePane[] = ["sessions", "thread"];
 const initialStoredLayout = readStoredLayout();
 
+type AppProps = {
+  initialThreadId?: string | null;
+};
+
 function useStableCallback<T extends (...args: never[]) => unknown>(callback: T): T {
   const callbackRef = useRef(callback);
   useLayoutEffect(() => {
@@ -103,7 +108,9 @@ function useStableCallback<T extends (...args: never[]) => unknown>(callback: T)
   return useCallback(((...args: Parameters<T>) => callbackRef.current(...args)) as T, []);
 }
 
-export default function App() {
+export default function App({ initialThreadId = null }: AppProps) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [authInfo, setAuthInfo] = useState<AuthState | null>(null);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
@@ -214,6 +221,17 @@ export default function App() {
       source.close();
     };
   }, [authenticated]);
+
+  useEffect(() => {
+    if (!authenticated || !initialThreadId) {
+      return;
+    }
+    const targetPaneIndex = activePaneIndexRef.current;
+    if (openThreadIdsRef.current[targetPaneIndex] === initialThreadId && selectedThreadId === initialThreadId) {
+      return;
+    }
+    void selectThread(initialThreadId, targetPaneIndex, false);
+  }, [authenticated, initialThreadId, selectedThreadId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1012,10 +1030,16 @@ export default function App() {
     setSelectedThreadId((current) => (current && closing.has(current) ? null : current));
   }
 
-  async function selectThread(threadId: string, paneIndex = activePaneIndexRef.current) {
+  async function selectThread(threadId: string, paneIndex = activePaneIndexRef.current, updateRoute = true) {
     const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
     const loadToken = ++threadLoadSeqRef.current;
     paneThreadLoadTokensRef.current[targetPaneIndex] = loadToken;
+    if (updateRoute) {
+      const nextPath = `/thread/${encodeURIComponent(threadId)}`;
+      if (pathname !== nextPath) {
+        router.push(nextPath);
+      }
+    }
     setLoadingThreadByPane((current) => ({ ...current, [targetPaneIndex]: threadId }));
     setPaneThreadId(targetPaneIndex, threadId);
     activatePane(targetPaneIndex);

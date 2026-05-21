@@ -2,7 +2,7 @@
 
 TypeScript web UI for controlling `codex app-server` remotely.
 
-The backend is a small Node HTTP/SSE server. The frontend is a Next/Tailwind React app with shadcn/ui and AI Elements components. `next build` exports the frontend into `out/`, and the backend serves that artifact.
+The app is a Next.js App Router application with Tailwind, shadcn/ui, and AI Elements components. UI routes live under `/threads` and `/thread/[threadId]`; API endpoints are implemented as Next route handlers under `/api`.
 
 ## Run
 
@@ -19,15 +19,16 @@ The server is protected by password auth. Login exchanges
 localStorage and sent as an `Authorization` header. With no password configured,
 login remains locked and API routes stay unauthorized.
 
-For frontend-only development, run Next directly:
+For development, run Next directly:
 
 ```bash
 npm run dev
 ```
 
-For the full local service, run the Codex app-server sidecar and backend as
-plain shell processes. This keeps the Codex app-server out of npm lifecycle
-watchers and leaves PID/log files under `tmp/`.
+For the full local service, run the Codex app-server sidecar as a plain shell
+process. This keeps the Codex app-server out of npm lifecycle watchers and
+leaves PID/log files under `tmp/`. Next talks to the sidecar through the Unix
+socket in `CODEX_APP_SERVER_SOCKET`.
 
 Start the sidecar:
 
@@ -39,11 +40,11 @@ nohup codex app-server --listen "unix://$CODEX_APP_SERVER_SOCKET" > tmp/codex-ap
 echo $! > tmp/codex-app-server.pid
 ```
 
-Then build and run the backend against that socket:
+Then build and run Next against that socket:
 
 ```bash
 npm run build
-CODEX_APP_SERVER_SOCKET="$PWD/tmp/codex-app-server.sock" CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 PORT=4545 npm start
+CODEX_APP_SERVER_SOCKET="$PWD/tmp/codex-app-server.sock" CODEX_WEB_UI_PASSWORD='change-me' npm start
 ```
 
 To stop the sidecar:
@@ -63,7 +64,7 @@ Set a strong `CODEX_WEB_UI_PASSWORD` before exposing the server to the internet.
 Useful environment variables:
 
 ```bash
-CODEX_WEB_UI_PASSWORD='change-me' PORT=4545 HOST=0.0.0.0 npm start
+CODEX_WEB_UI_PASSWORD='change-me' PORT=4545 npm start
 CODEX_WEB_UI_ALLOWED_ORIGINS='http://localhost:*,http://127.0.0.1:*,http://192.168.1.66:*,https://manifesto-tank-reliance.ngrok-free.dev' npm start
 CODEX_WEB_UI_AUTH_SECRET='separate-token-signing-secret' npm start
 CODEX_COMMAND=codex CODEX_CWD=/path/to/project npm start
@@ -72,7 +73,7 @@ CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
 CODEX_WEB_UI_DATA_DIR=/path/to/logs npm start
 ```
 
-The backend loads `.env` from the project root before reading these variables. Shell environment variables still win over `.env`.
+Next loads `.env` from the project root before reading these variables. Shell environment variables still win over `.env`.
 
 ## Features
 

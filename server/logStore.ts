@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { JsonValue, LogEntry, SessionIndexRecord, ThreadRecord } from "./types.js";
+import type { JsonValue, LogEntry, SessionIndexRecord, ThreadRecord } from "./types";
 
 export class SessionLogStore {
   readonly rootDir: string;

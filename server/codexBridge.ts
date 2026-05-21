@@ -2,9 +2,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import crypto from "node:crypto";
 import net from "node:net";
 import readline from "node:readline";
-import type { EventHub } from "./eventHub.js";
-import type { SessionLogStore } from "./logStore.js";
-import type { JsonRpcNotification, JsonRpcResponse, JsonValue, ServerStatus } from "./types.js";
+import type { EventHub } from "./eventHub";
+import type { SessionLogStore } from "./logStore";
+import type { JsonRpcNotification, JsonRpcResponse, JsonValue, ServerStatus } from "./types";
 
 interface PendingRequest {
   method: string;

@@ -1,5 +1,5 @@
-import App from "@/client/src/App";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <App />;
+  redirect("/threads");
 }

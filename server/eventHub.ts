@@ -1,10 +1,15 @@
-type SseResponse = import("node:http").ServerResponse;
 type SseRequest = import("node:http").IncomingMessage;
+type SseResponse = import("node:http").ServerResponse;
 
 export interface ServerEvent {
   type: string;
   payload: unknown;
   at: number;
+}
+
+interface SseClient {
+  close(): void;
+  send(eventName: string, payload: unknown): void;
 }
 
 class RingBuffer<T> {
@@ -25,7 +30,7 @@ class RingBuffer<T> {
 }
 
 export class EventHub {
-  private readonly clients = new Set<SseResponse>();
+  private readonly clients = new Set<SseClient>();
   private readonly history = new RingBuffer<ServerEvent>(300);
 
   add(req: SseRequest, res: SseResponse): void {
@@ -36,8 +41,15 @@ export class EventHub {
       "X-Accel-Buffering": "no"
     });
     res.write("\n");
-    this.clients.add(res);
-    this.send(res, "hello", { serverTime: new Date().toISOString(), history: this.history.snapshot() });
+    const client: SseClient = {
+      close: () => undefined,
+      send: (eventName, payload) => {
+        res.write(`event: ${eventName}\n`);
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      }
+    };
+    this.clients.add(client);
+    client.send("hello", { serverTime: new Date().toISOString(), history: this.history.snapshot() });
 
     const keepAlive = setInterval(() => {
       if (!res.destroyed) {
@@ -47,7 +59,43 @@ export class EventHub {
 
     req.on("close", () => {
       clearInterval(keepAlive);
-      this.clients.delete(res);
+      this.clients.delete(client);
+    });
+  }
+
+  stream(signal?: AbortSignal): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    let client: SseClient | null = null;
+    let keepAlive: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (keepAlive) {
+        clearInterval(keepAlive);
+        keepAlive = null;
+      }
+      if (client) {
+        this.clients.delete(client);
+        client = null;
+      }
+    };
+
+    return new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        client = {
+          close: cleanup,
+          send: (eventName, payload) => {
+            controller.enqueue(encoder.encode(`event: ${eventName}\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+          }
+        };
+        this.clients.add(client);
+        client.send("hello", { serverTime: new Date().toISOString(), history: this.history.snapshot() });
+        keepAlive = setInterval(() => {
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
+        }, 25_000);
+        signal?.addEventListener("abort", cleanup, { once: true });
+      },
+      cancel: cleanup
     });
   }
 
@@ -55,12 +103,7 @@ export class EventHub {
     const event = { type, payload, at: Date.now() };
     this.history.push(event);
     for (const client of this.clients) {
-      this.send(client, "message", event);
+      client.send("message", event);
     }
-  }
-
-  private send(res: SseResponse, eventName: string, payload: unknown): void {
-    res.write(`event: ${eventName}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
   }
 }

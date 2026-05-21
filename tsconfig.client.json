@@ -1,8 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
-  },
-  "include": ["app/**/*.ts", "app/**/*.tsx", "client/src/**/*.ts", "client/src/**/*.tsx", "components/**/*.ts", "components/**/*.tsx", "lib/**/*.ts", "next-env.d.ts", ".next/types/**/*.ts"]
-}
