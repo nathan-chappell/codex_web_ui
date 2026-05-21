@@ -5,7 +5,7 @@
   --panel-soft: #eef3f4;
   --line: #d8e0e3;
   --text: #172026;
-  --muted: #65727b;
+  --muted-text: #65727b;
   --accent: #0c7c86;
   --accent-strong: #075d68;
   --green: #237a4b;
@@ -248,7 +248,7 @@ textarea {
 .thread-title-block p,
 .composer-bottom span,
 .muted {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
 }
 
@@ -267,7 +267,7 @@ textarea {
 }
 
 .selection-tools > span {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   font-weight: 750;
 }
@@ -285,7 +285,7 @@ textarea {
 
 .field span {
   display: block;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   font-weight: 650;
   margin-bottom: 6px;
@@ -306,7 +306,7 @@ textarea {
 .segmented button,
 .tabs button {
   background: transparent;
-  color: var(--muted);
+  color: var(--muted-text);
   padding: 8px 10px;
   border-right: 1px solid var(--line);
   cursor: pointer;
@@ -349,7 +349,7 @@ textarea {
   gap: 8px;
   padding: 6px 6px;
   background: var(--panel);
-  color: var(--muted);
+  color: var(--muted-text);
   border-bottom: 1px solid var(--line);
   font-size: 11px;
   text-transform: uppercase;
@@ -357,7 +357,7 @@ textarea {
 }
 
 .thread-group-heading span {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 11px;
 }
 
@@ -432,7 +432,7 @@ textarea {
 .session-row p {
   grid-column: 2;
   margin: 0;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   line-height: 1.35;
   display: -webkit-box;
@@ -542,7 +542,7 @@ textarea {
   place-self: start center;
   margin-top: 96px;
   text-align: center;
-  color: var(--muted);
+  color: var(--muted-text);
 }
 
 .empty-state.inline {
@@ -707,7 +707,7 @@ textarea {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   margin-bottom: 10px;
   gap: 8px;
@@ -807,7 +807,7 @@ textarea {
 }
 
 .approval-card-heading code {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -850,7 +850,7 @@ textarea {
 }
 
 .item-kind {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
@@ -896,7 +896,7 @@ textarea {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
 }
 
@@ -948,7 +948,7 @@ textarea {
   align-items: center;
   gap: 7px;
   flex-wrap: wrap;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
 }
 
@@ -1206,7 +1206,7 @@ textarea {
   border-radius: 999px;
   border: 1px solid var(--line);
   background: #fff;
-  color: var(--muted);
+  color: var(--muted-text);
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 800;
@@ -1487,7 +1487,7 @@ textarea {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   font-weight: 750;
 }
@@ -1600,7 +1600,7 @@ textarea {
 
 .file-explorer-main span,
 .file-explorer-meta {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
 }
 
@@ -1636,7 +1636,7 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--muted);
+  color: var(--muted-text);
   font-weight: 800;
 }
 
@@ -1720,7 +1720,7 @@ textarea {
 .status-detail span,
 .status-section h3 {
   margin: 0;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
@@ -1837,7 +1837,7 @@ textarea {
 
 .selected-path {
   margin: 0;
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -1922,7 +1922,7 @@ textarea {
   .mobile-pane-tabs button {
     min-height: 40px;
     background: transparent;
-    color: var(--muted);
+    color: var(--muted-text);
     border-right: 1px solid var(--line);
     font-weight: 750;
   }

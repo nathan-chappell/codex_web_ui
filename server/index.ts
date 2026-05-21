@@ -287,7 +287,9 @@ function numberValue(value: unknown): number | null {
 }
 
 async function shutdown(): Promise<void> {
-  await bridge.stop();
+  if (!process.env.CODEX_APP_SERVER_SOCKET) {
+    await bridge.stop();
+  }
   process.exit(0);
 }
 
