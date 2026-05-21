@@ -2589,7 +2589,7 @@ const Composer = memo(function Composer({
             >
               <Paperclip size={17} />
             </PromptInputButton>
-            <PromptInputSubmit className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)}>
+            <PromptInputSubmit className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} size="sm">
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
             </PromptInputSubmit>
             <PromptInputButton className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId || Boolean(submittingAction)}>
