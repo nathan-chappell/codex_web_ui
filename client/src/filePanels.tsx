@@ -1,9 +1,12 @@
+"use client";
+
 import { ChevronUp, FileText, Folder, RefreshCw, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import type { BundledLanguage } from "shiki";
+import { CodeBlock } from "@/components/ai-elements/code-block";
+import { FileTree, FileTreeActions, FileTreeFile, FileTreeIcon, FileTreeName } from "@/components/ai-elements/file-tree";
 import { downloadReferencedFile, fetchReferencedFileBlob } from "./api";
 import type { FileExplorer, FileExplorerEntry, FilePreview, FileReference } from "./types";
 
@@ -31,6 +34,19 @@ export function FileExplorerModal({
     }
     return entries.filter((entry) => `${entry.name}\n${entry.relativePath}\n${entry.kind || ""}`.toLowerCase().includes(normalized));
   }, [explorer, filter]);
+  const entriesByPath = useMemo(() => new Map(visibleEntries.map((entry) => [entry.path, entry])), [visibleEntries]);
+
+  function handleSelect(pathValue: string) {
+    const entry = entriesByPath.get(pathValue);
+    if (!entry || loading) {
+      return;
+    }
+    if (entry.type === "directory") {
+      onBrowse(entry.path);
+      return;
+    }
+    void onOpenFile(entry);
+  }
 
   return (
     <div className="modal-backdrop">
@@ -77,29 +93,30 @@ export function FileExplorerModal({
           ) : visibleEntries.length === 0 ? (
             <p className="muted empty-pad">No files found.</p>
           ) : (
-            visibleEntries.map((entry) => (
-              <button
-                className="file-explorer-row"
-                key={`${entry.type}:${entry.path}`}
-                type="button"
-                disabled={loading}
-                onClick={() => entry.type === "directory" ? onBrowse(entry.path) : void onOpenFile(entry)}
-                title={entry.displayPath}
-              >
-                <span className={`file-explorer-icon ${entry.type}`}>
-                  {entry.type === "directory" ? <Folder size={18} /> : <FileText size={18} />}
-                </span>
-                <span className="file-explorer-main">
-                  <strong>{entry.name}</strong>
-                  <span>{entry.relativePath || entry.displayPath}</span>
-                </span>
-                <span className="file-explorer-meta">
-                  {entry.tracked && <span className="file-tracked-badge">git</span>}
-                  {entry.type === "file" && <span>{formatFileSize(entry.size ?? 0)}</span>}
-                  {entry.kind && <span>{entry.kind}</span>}
-                </span>
-              </button>
-            ))
+            <FileTree className="file-explorer-tree" onSelect={handleSelect}>
+              {visibleEntries.map((entry) => (
+                <FileTreeFile
+                  className="file-explorer-tree-row"
+                  key={`${entry.type}:${entry.path}`}
+                  path={entry.path}
+                  name={entry.name}
+                  title={entry.displayPath}
+                >
+                  <FileTreeIcon className={`file-explorer-icon ${entry.type}`}>
+                    {entry.type === "directory" ? <Folder size={18} /> : <FileText size={18} />}
+                  </FileTreeIcon>
+                  <span className="file-explorer-main">
+                    <strong><FileTreeName>{entry.name}</FileTreeName></strong>
+                    <span>{entry.relativePath || entry.displayPath}</span>
+                  </span>
+                  <FileTreeActions className="file-explorer-meta">
+                    {entry.tracked && <span className="file-tracked-badge">git</span>}
+                    {entry.type === "file" && <span>{formatFileSize(entry.size ?? 0)}</span>}
+                    {entry.kind && <span>{entry.kind}</span>}
+                  </FileTreeActions>
+                </FileTreeFile>
+              ))}
+            </FileTree>
           )}
         </div>
       </section>
@@ -168,7 +185,7 @@ function renderFilePreview(file: FilePreview, reference: FileReference) {
     return <AuthenticatedMediaPreview className="file-video-preview" file={file} reference={reference} type="video" />;
   }
   if (file.kind === "json") {
-    return <pre className="json-block file-preview-block">{prettyJson(content)}</pre>;
+    return <CodeBlock className="file-preview-code" code={prettyJson(content)} language="json" showLineNumbers />;
   }
   if (file.kind === "markdown") {
     return (
@@ -178,13 +195,9 @@ function renderFilePreview(file: FilePreview, reference: FileReference) {
     );
   }
   if (file.kind === "code") {
-    return (
-      <SyntaxHighlighter language={languageForFile(file)} style={oneLight} customStyle={{ margin: 0, borderRadius: 6 }}>
-        {content}
-      </SyntaxHighlighter>
-    );
+    return <CodeBlock className="file-preview-code" code={content} language={languageForFile(file)} showLineNumbers />;
   }
-  return <pre className="code-block file-preview-block">{content}</pre>;
+  return <CodeBlock className="file-preview-code" code={content} language="markdown" />;
 }
 
 function AuthenticatedMediaPreview({
@@ -250,7 +263,7 @@ function prettyJson(content: string): string {
   }
 }
 
-function languageForFile(file: FilePreview): string {
+function languageForFile(file: FilePreview): BundledLanguage {
   const map: Record<string, string> = {
     js: "javascript",
     jsx: "jsx",
@@ -266,7 +279,7 @@ function languageForFile(file: FilePreview): string {
     md: "markdown",
     markdown: "markdown"
   };
-  return map[file.extension] || file.extension || "text";
+  return (map[file.extension] || file.extension || "markdown") as BundledLanguage;
 }
 
 function formatFileSize(bytes: number): string {

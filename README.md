@@ -2,7 +2,7 @@
 
 TypeScript web UI for controlling `codex app-server` remotely.
 
-The backend is a small Node HTTP/SSE server. The frontend is a Vite React TS app that builds into `dist/public` and is served by the backend.
+The backend is a small Node HTTP/SSE server. The frontend is a Next/Tailwind React app with shadcn/ui and AI Elements components. `npm run build:client` exports it statically, copies it into `dist/public`, and the backend serves that artifact.
 
 ## Run
 
@@ -19,7 +19,7 @@ The server is protected by password auth. Login exchanges
 localStorage and sent as an `Authorization` header. With no password configured,
 login remains locked and API routes stay unauthorized.
 
-For development, run the backend, Vite, and a sibling Codex app-server process:
+For development, run the backend, Next dev server, and a sibling Codex app-server process:
 
 ```bash
 CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 npm run dev
@@ -29,8 +29,8 @@ In dev mode, the backend connects directly to the sibling app-server over
 `CODEX_APP_SERVER_SOCKET` instead of owning the app-server process. That lets
 backend watch restarts reconnect without terminating active Codex work.
 
-For an ngrok-facing local watch mode without Vite, rebuild the frontend on
-change and restart the backend on server changes:
+For local watch mode without the Next dev server, rebuild the exported frontend
+on change and restart the backend on server changes:
 
 ```bash
 CODEX_WEB_UI_PASSWORD='change-me' HOST=0.0.0.0 PORT=4545 npm run watch
@@ -78,7 +78,7 @@ The backend loads `.env` from the project root before reading these variables. S
 - Streams app-server notifications and stderr via SSE.
 - Writes backend JSONL logs to `data/server.jsonl` and `data/sessions/<thread-id>.jsonl`; RPC request/response logs keep summary metadata instead of full payloads.
 - Shows file-backed session history in the frontend.
-- Renders turns, reasoning, user/agent markdown, commands, command output, file changes, diffs, file references, and tool calls.
+- Renders turns, reasoning, user/agent markdown, commands, command output, file changes, diffs, file references, and tool calls, with AI Elements primitives for the composer, confirmations, terminal output, code blocks, and file tree.
 - Uploads file attachments and inserts uploaded paths into the composer.
 - Previews referenced text, code, Markdown, JSON, images, PDFs, and browser-playable video files.
 - Shows app-server status and account rate-limit usage.

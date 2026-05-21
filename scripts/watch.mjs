@@ -20,8 +20,13 @@ await run("server build", ["run", "build:server"]);
 startAppServer();
 startBackend();
 watchTree(path.join(projectRoot, "client"), () => scheduleTask("client", rebuildClient));
+watchTree(path.join(projectRoot, "app"), () => scheduleTask("client", rebuildClient));
+watchTree(path.join(projectRoot, "components"), () => scheduleTask("client", rebuildClient));
+watchTree(path.join(projectRoot, "lib"), () => scheduleTask("client", rebuildClient));
 watchTree(path.join(projectRoot, "server"), () => scheduleTask("server", rebuildServerAndRestartBackend));
-watchFile(path.join(projectRoot, "vite.config.ts"), () => scheduleTask("client", rebuildClient));
+watchFile(path.join(projectRoot, "next.config.ts"), () => scheduleTask("client", rebuildClient));
+watchFile(path.join(projectRoot, "postcss.config.mjs"), () => scheduleTask("client", rebuildClient));
+watchFile(path.join(projectRoot, "components.json"), () => scheduleTask("client", rebuildClient));
 watchFile(path.join(projectRoot, "tsconfig.server.json"), () => scheduleTask("server", rebuildServerAndRestartBackend));
 watchFile(path.join(projectRoot, "package.json"), () => {
   scheduleTask("client", rebuildClient);
@@ -175,8 +180,13 @@ function refreshTree(root, callback) {
     watcher.close();
   }
   watchTree(path.join(projectRoot, "client"), () => scheduleTask("client", rebuildClient));
+  watchTree(path.join(projectRoot, "app"), () => scheduleTask("client", rebuildClient));
+  watchTree(path.join(projectRoot, "components"), () => scheduleTask("client", rebuildClient));
+  watchTree(path.join(projectRoot, "lib"), () => scheduleTask("client", rebuildClient));
   watchTree(path.join(projectRoot, "server"), () => scheduleTask("server", rebuildServerAndRestartBackend));
-  watchFile(path.join(projectRoot, "vite.config.ts"), () => scheduleTask("client", rebuildClient));
+  watchFile(path.join(projectRoot, "next.config.ts"), () => scheduleTask("client", rebuildClient));
+  watchFile(path.join(projectRoot, "postcss.config.mjs"), () => scheduleTask("client", rebuildClient));
+  watchFile(path.join(projectRoot, "components.json"), () => scheduleTask("client", rebuildClient));
   watchFile(path.join(projectRoot, "tsconfig.server.json"), () => scheduleTask("server", rebuildServerAndRestartBackend));
   watchFile(path.join(projectRoot, "package.json"), () => {
     scheduleTask("client", rebuildClient);

@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+out/
+.next/
 
 # Runtime data and logs
 data/

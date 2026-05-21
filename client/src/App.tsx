@@ -1,3 +1,5 @@
+"use client";
+
 import {
   Archive,
   ChevronUp,
@@ -22,6 +24,28 @@ import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useCallback, useEff
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  CodeBlock
+} from "@/components/ai-elements/code-block";
+import {
+  Confirmation,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRequest,
+  ConfirmationTitle
+} from "@/components/ai-elements/confirmation";
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputButton,
+  PromptInputFooter,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools
+} from "@/components/ai-elements/prompt-input";
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { Terminal } from "@/components/ai-elements/terminal";
+import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
 import {
   browseFiles,
   browseRepositories,
@@ -1670,33 +1694,39 @@ function ApprovalRequestCard({
   const canTrust = Boolean(execpolicyDecision(request));
   const canAcceptForSession = hasAvailableDecision(request, "acceptForSession");
   return (
-    <section className="approval-card">
-      <div className="approval-card-heading">
+    <Confirmation
+      approval={{ id: clientRequestKey(request.id) }}
+      className="approval-card"
+      state="approval-requested"
+    >
+      <ConfirmationTitle className="approval-card-heading">
         <span>{approvalTitle(request.method)}</span>
         <code>{request.method}</code>
-      </div>
-      {reason && <p className="approval-reason">{reason}</p>}
-      {command && <pre className="approval-command">{command}</pre>}
-      {cwd && <p className="muted">{cwd}</p>}
-      <div className="approval-actions">
-        <button className="primary-button" type="button" disabled={responding} onClick={() => void onRespond(request, "accept")}>
+      </ConfirmationTitle>
+      <ConfirmationRequest>
+        {reason && <p className="approval-reason">{reason}</p>}
+        {command && <pre className="approval-command">{command}</pre>}
+        {cwd && <p className="muted">{cwd}</p>}
+      </ConfirmationRequest>
+      <ConfirmationActions className="approval-actions">
+        <ConfirmationAction className="primary-button" disabled={responding} onClick={() => void onRespond(request, "accept")}>
           Approve
-        </button>
+        </ConfirmationAction>
         {canAcceptForSession && (
-          <button className="secondary-button" type="button" disabled={responding} onClick={() => void onRespond(request, "acceptForSession")}>
+          <ConfirmationAction className="secondary-button" disabled={responding} onClick={() => void onRespond(request, "acceptForSession")}>
             Approve session
-          </button>
+          </ConfirmationAction>
         )}
         {canTrust && (
-          <button className="secondary-button" type="button" disabled={responding} onClick={() => void onRespond(request, "acceptWithExecpolicyAmendment")}>
+          <ConfirmationAction className="secondary-button" disabled={responding} onClick={() => void onRespond(request, "acceptWithExecpolicyAmendment")}>
             Trust command
-          </button>
+          </ConfirmationAction>
         )}
-        <button className="danger-button" type="button" disabled={responding} onClick={() => void onRespond(request, "decline")}>
+        <ConfirmationAction className="danger-button" disabled={responding} onClick={() => void onRespond(request, "decline")}>
           Deny
-        </button>
-      </div>
-    </section>
+        </ConfirmationAction>
+      </ConfirmationActions>
+    </Confirmation>
   );
 }
 
@@ -1885,17 +1915,29 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
   if (item.type === "reasoning") {
     const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : "";
     const content = Array.isArray(item.content) ? item.content.join("\n\n") : "";
-    return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={[summary, content].filter(Boolean).join("\n\n") || "Reasoning"} />;
+    return (
+      <Reasoning className="reasoning-element" defaultOpen={false} isStreaming={String(item.status ?? "").toLowerCase().includes("running")}>
+        <ReasoningTrigger />
+        <ReasoningContent>{[summary, content].filter(Boolean).join("\n\n") || "Reasoning"}</ReasoningContent>
+      </Reasoning>
+    );
   }
   if (item.type === "plan") {
     return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={typeof item.text === "string" ? item.text : "Plan updated"} />;
   }
   if (item.type === "commandExecution") {
+    const command = typeof item.command === "string" ? item.command : commandFromActions(item.commandActions);
     return (
       <>
-        <p className="command-line">$ {typeof item.command === "string" ? item.command : commandFromActions(item.commandActions)}</p>
+        <p className="command-line">$ {command}</p>
         <p className="muted">{[item.status, exitText(item.exitCode), item.cwd].filter(Boolean).join(" | ")}</p>
-        {typeof item.aggregatedOutput === "string" && item.aggregatedOutput && <pre className="code-block">{truncate(item.aggregatedOutput, 16000)}</pre>}
+        {typeof item.aggregatedOutput === "string" && item.aggregatedOutput && (
+          <Terminal
+            className="command-terminal"
+            isStreaming={String(item.status ?? "").toLowerCase().includes("running")}
+            output={truncate(item.aggregatedOutput, 16000)}
+          />
+        )}
       </>
     );
   }
@@ -1903,14 +1945,15 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
     return <FileChangeView cwd={cwd} item={item} onOpenFile={onOpenFile} />;
   }
   if (item.type === "mcpToolCall" || item.type === "dynamicToolCall") {
+    const toolTitle = [item.server, item.namespace, item.tool].filter(Boolean).join(".") || "Tool call";
     return (
-      <>
-        <p>{[item.server, item.namespace, item.tool].filter(Boolean).join(".")} <span className="muted">{String(item.status ?? "")}</span></p>
-        <details>
-          <summary>Details</summary>
-          <pre className="json-block">{JSON.stringify(item, null, 2)}</pre>
-        </details>
-      </>
+      <Tool className="tool-call-element" defaultOpen={false}>
+        <ToolHeader state={toolStateFromStatus(item.status)} title={toolTitle} toolName={toolTitle} type="dynamic-tool" />
+        <ToolContent>
+          <ToolInput input={pickToolInput(item)} />
+          <ToolOutput errorText={toolErrorText(item)} output={pickToolOutput(item)} />
+        </ToolContent>
+      </Tool>
     );
   }
   if (item.type === "webSearch") {
@@ -1919,7 +1962,41 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
   if (item.type === "imageView") {
     return <p>{String(item.path ?? "Image viewed")}</p>;
   }
-  return <pre className="json-block">{JSON.stringify(item, null, 2)}</pre>;
+  return <CodeBlock className="json-block" code={JSON.stringify(item, null, 2)} language="json" />;
+}
+
+type ToolState = Parameters<typeof ToolHeader>[0]["state"];
+
+function toolStateFromStatus(status: unknown): ToolState {
+  const value = String(status ?? "").toLowerCase();
+  if (["failed", "error", "systemerror"].includes(value)) {
+    return "output-error";
+  }
+  if (["denied", "cancelled", "canceled"].includes(value)) {
+    return "output-denied";
+  }
+  if (["running", "inprogress", "active", "pending"].includes(value)) {
+    return "input-available";
+  }
+  if (["waitingonapproval", "approval-requested"].includes(value)) {
+    return "approval-requested";
+  }
+  return "output-available";
+}
+
+function pickToolInput(item: ThreadItem): unknown {
+  const record = asRecord(item);
+  return record.input ?? record.arguments ?? record.params ?? record;
+}
+
+function pickToolOutput(item: ThreadItem): unknown {
+  const record = asRecord(item);
+  return record.output ?? record.result ?? record.content ?? null;
+}
+
+function toolErrorText(item: ThreadItem): string | undefined {
+  const record = asRecord(item);
+  return typeof record.error === "string" ? record.error : undefined;
 }
 
 function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: ThreadItem; onOpenFile: (reference: FileReference) => Promise<void> }) {
@@ -1928,7 +2005,7 @@ function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: T
     return (
       <>
         <p>{String(item.status ?? "changed")}</p>
-        <pre className="json-block">{JSON.stringify(item.changes ?? [], null, 2)}</pre>
+        <CodeBlock className="json-block" code={JSON.stringify(item.changes ?? [], null, 2)} language="json" />
       </>
     );
   }
@@ -2405,7 +2482,7 @@ const Composer = memo(function Composer({
     }
   }, [deliveryKey, deliveryVersion, submissionNotice]);
 
-  async function submitDraft(action: ComposerAction) {
+  async function submitDraft(action: ComposerAction, text?: string) {
     if (submittingAction) {
       return;
     }
@@ -2414,7 +2491,7 @@ const Composer = memo(function Composer({
     setSubmissionNotice(null);
     setSubmittingAction(action);
     try {
-      const sent = await onSend(readDraft(), action);
+      const sent = await onSend(text ?? readDraft(), action);
       if (sent) {
         setDraftValue("");
         if (deliveryKeyRef.current !== deliveryKey) {
@@ -2457,73 +2534,74 @@ const Composer = memo(function Composer({
   }
 
   return (
-    <form
+    <PromptInput
       className={`composer ${collapsed ? "collapsed" : ""}`}
-      onSubmit={async (event) => {
-        event.preventDefault();
+      maxFiles={1}
+      onError={(error) => onError(new Error(error.message))}
+      onSubmit={async (message) => {
         if (collapsed) {
           return;
         }
-        await submitDraft("send");
+        await submitDraft("send", message.text);
       }}
     >
       <div className="composer-top">
-        <button
+        <PromptInputButton
           className="icon-button"
           type="button"
           onClick={() => onCollapsedChange(!collapsed)}
-          title={collapsed ? "Expand composer" : "Collapse composer"}
+          tooltip={collapsed ? "Expand composer" : "Collapse composer"}
           aria-label={collapsed ? "Expand composer" : "Collapse composer"}
         >
           {collapsed ? <ChevronsUp size={17} /> : <ChevronsDown size={17} />}
-        </button>
+        </PromptInputButton>
         <div className="composer-tool-buttons">
-          <button className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} title="Interrupt" aria-label="Interrupt">
+          <PromptInputButton className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} tooltip="Interrupt" aria-label="Interrupt">
             <PauseCircle size={17} />
-          </button>
-          <button className="icon-button" type="button" onClick={onFork} title="Fork thread" aria-label="Fork thread">
+          </PromptInputButton>
+          <PromptInputButton className="icon-button" type="button" onClick={onFork} tooltip="Fork thread" aria-label="Fork thread">
             <GitFork size={17} />
-          </button>
-          <button className="icon-button" type="button" onClick={onCompact} title="Compact thread" aria-label="Compact thread">
+          </PromptInputButton>
+          <PromptInputButton className="icon-button" type="button" onClick={onCompact} tooltip="Compact thread" aria-label="Compact thread">
             <Minimize2 size={17} />
-          </button>
+          </PromptInputButton>
         </div>
       </div>
-      <div className="composer-body">
-        <textarea ref={textareaRef} rows={5} placeholder="Send a new message or steer the active turn" />
+      <PromptInputBody className="composer-body">
+        <PromptInputTextarea ref={textareaRef} rows={5} placeholder="Send a new message or steer the active turn" />
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
-        <div className="composer-bottom">
+        <PromptInputFooter className="composer-bottom">
           <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
-          <div className="composer-actions">
+          <PromptInputTools className="composer-actions">
             <input
               className="file-input"
               ref={fileInputRef}
               type="file"
               onChange={(event) => void handleAttachmentFile(event.currentTarget.files?.[0])}
             />
-            <button
+            <PromptInputButton
               className="icon-button"
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading || Boolean(submittingAction)}
-              title="Attach file"
+              tooltip="Attach file"
               aria-label="Attach file"
             >
               <Paperclip size={17} />
-            </button>
-            <button className={activeTurnId ? "queue-button" : "primary-button"} type="submit" disabled={Boolean(submittingAction)}>
+            </PromptInputButton>
+            <PromptInputSubmit className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)}>
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
-            </button>
-            <button className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId || Boolean(submittingAction)}>
+            </PromptInputSubmit>
+            <PromptInputButton className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId || Boolean(submittingAction)}>
               <Send size={16} /> {submittingAction === "steer" ? "Steering" : "Steer"}
-            </button>
-            <button className="ghost-button" type="button" onClick={onArchive}>
+            </PromptInputButton>
+            <PromptInputButton className="ghost-button" type="button" onClick={onArchive}>
               <Archive size={16} /> {archiveLabel}
-            </button>
-          </div>
-        </div>
-      </div>
-    </form>
+            </PromptInputButton>
+          </PromptInputTools>
+        </PromptInputFooter>
+      </PromptInputBody>
+    </PromptInput>
   );
 });
 

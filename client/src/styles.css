@@ -1102,6 +1102,15 @@ textarea {
     background-color 190ms ease;
 }
 
+.composer [data-slot="input-group"] {
+  display: grid;
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .composer.collapsed {
   padding: 10px 18px;
   gap: 0;
@@ -1116,6 +1125,13 @@ textarea {
   transition:
     max-height 210ms ease,
     opacity 140ms ease;
+}
+
+.composer-body[data-slot="input-group-addon"] {
+  width: 100%;
+  cursor: default;
+  padding: 0;
+  color: inherit;
 }
 
 .composer.collapsed .composer-body {
@@ -1163,6 +1179,19 @@ textarea {
 
 .composer textarea {
   min-height: 118px;
+}
+
+.composer textarea[data-slot="input-group-control"] {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  padding: 10px 12px;
+}
+
+.command-terminal {
+  margin-top: 8px;
+  border-radius: 8px;
 }
 
 .composer-input-status {
@@ -1498,7 +1527,17 @@ textarea {
   font-weight: 750;
 }
 
-.file-explorer-row {
+.file-explorer-tree {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.file-explorer-tree > div {
+  padding: 0;
+}
+
+.file-explorer-tree-row {
   width: 100%;
   min-height: 58px;
   display: grid;
@@ -1514,15 +1553,15 @@ textarea {
   cursor: pointer;
 }
 
-.file-explorer-row:last-child {
+.file-explorer-tree-row:last-child {
   border-bottom: 0;
 }
 
-.file-explorer-row:hover {
+.file-explorer-tree-row:hover {
   background: var(--panel-soft);
 }
 
-.file-explorer-row:disabled {
+.file-explorer-tree-row[aria-disabled="true"] {
   cursor: wait;
 }
 
@@ -1581,6 +1620,11 @@ textarea {
   padding: 2px 7px;
   font-size: 11px;
   font-weight: 850;
+}
+
+.file-preview-code {
+  max-height: min(72vh, 720px);
+  overflow: auto;
 }
 
 .file-loading-body {
