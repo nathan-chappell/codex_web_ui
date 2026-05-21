@@ -39,7 +39,6 @@ import {
   PromptInputBody,
   PromptInputButton,
   PromptInputFooter,
-  PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools
 } from "@/components/ai-elements/prompt-input";
@@ -2589,9 +2588,9 @@ const Composer = memo(function Composer({
             >
               <Paperclip size={17} />
             </PromptInputButton>
-            <PromptInputSubmit className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} size="sm">
+            <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
-            </PromptInputSubmit>
+            </button>
             <PromptInputButton className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId || Boolean(submittingAction)}>
               <Send size={16} /> {submittingAction === "steer" ? "Steering" : "Steer"}
             </PromptInputButton>
