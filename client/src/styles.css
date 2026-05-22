@@ -1391,6 +1391,12 @@ textarea {
   border-color: #3d4a50;
 }
 
+.topbar .status-button {
+  background: transparent;
+  color: #f5f7f8;
+  border-color: #3d4a50;
+}
+
 .danger-button {
   background: #f8e6e6;
   color: var(--red);
