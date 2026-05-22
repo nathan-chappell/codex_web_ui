@@ -281,6 +281,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   );
   const activeThreadId = paneThreadIds[activePaneIndex] ?? null;
   const activeThread = activeThreadId ? openThreads[activeThreadId] ?? selectedThread : null;
+  const appTitle = activeThread ? titleForThread(activeThread) : "Codex Web UI";
   const selectionActive = selectedSessionIds.size > 0;
   const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
   const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
@@ -357,9 +358,11 @@ export default function App({ initialThreadId = null }: AppProps) {
     <main className={`app-shell ${authInfo?.warning ? "auth-warning-mode" : ""}`}>
       <header className="topbar">
         <div className="brand-block">
-          <div className="mark">CX</div>
+          <div className="mark" aria-hidden="true">
+            <img src="/icon.svg" alt="" />
+          </div>
           <div>
-            <strong>Codex Web UI</strong>
+            <strong title={appTitle}>{appTitle}</strong>
             {authInfo?.warning && <span className="auth-warning-text">{authInfo.warning}</span>}
           </div>
         </div>
@@ -2824,35 +2827,37 @@ const Composer = memo(function Composer({
       }}
     >
       <div className="composer-top">
-        <PromptInputButton
-          className="icon-button"
-          type="button"
-          onClick={() => onCollapsedChange(!collapsed)}
-          tooltip={collapsed ? "Expand composer" : "Collapse composer"}
-          aria-label={collapsed ? "Expand composer" : "Collapse composer"}
-        >
-          {collapsed ? <ChevronsUp size={17} /> : <ChevronsDown size={17} />}
-        </PromptInputButton>
-        <div className="composer-tool-buttons">
-          <PromptInputButton className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} tooltip="Interrupt" aria-label="Interrupt">
-            <PauseCircle size={17} />
+        <div className="composer-top-left">
+          <PromptInputButton
+            className="icon-button"
+            type="button"
+            onClick={() => onCollapsedChange(!collapsed)}
+            tooltip={collapsed ? "Expand composer" : "Collapse composer"}
+            aria-label={collapsed ? "Expand composer" : "Collapse composer"}
+          >
+            {collapsed ? <ChevronsUp size={17} /> : <ChevronsDown size={17} />}
           </PromptInputButton>
-          <PromptInputButton className="icon-button" type="button" onClick={onFork} tooltip="Fork thread" aria-label="Fork thread">
-            <GitFork size={17} />
-          </PromptInputButton>
-          <PromptInputButton className="icon-button" type="button" onClick={onCompact} tooltip="Compact thread" aria-label="Compact thread">
-            <Minimize2 size={17} />
-          </PromptInputButton>
+          <div className="composer-tool-buttons">
+            <PromptInputButton className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} tooltip="Interrupt" aria-label="Interrupt">
+              <PauseCircle size={17} />
+            </PromptInputButton>
+            <PromptInputButton className="icon-button" type="button" onClick={onFork} tooltip="Fork thread" aria-label="Fork thread">
+              <GitFork size={17} />
+            </PromptInputButton>
+            <PromptInputButton className="icon-button" type="button" onClick={onCompact} tooltip="Compact thread" aria-label="Compact thread">
+              <Minimize2 size={17} />
+            </PromptInputButton>
+          </div>
+        </div>
+        <div className="composer-top-meta">
+          <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
+          <ContextUsageBadge usage={contextUsage} />
         </div>
       </div>
       <PromptInputBody className="composer-body">
         <textarea ref={textareaRef} name="message" rows={5} placeholder="Send a new message or steer the active turn" />
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <PromptInputFooter className="composer-bottom">
-          <div className="composer-footer-meta">
-            <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
-            <ContextUsageBadge usage={contextUsage} />
-          </div>
           <PromptInputTools className="composer-actions">
             <input
               className="file-input"
