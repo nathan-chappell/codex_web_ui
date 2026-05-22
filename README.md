@@ -2,6 +2,14 @@
 
 TypeScript web UI for controlling `codex app-server` remotely.
 
+This project does not reimplement Codex. It is a client/UI layer over the
+official `codex app-server`.
+
+Status: workaround / experimental.
+
+Target: Linux/Ubuntu users who want a mobile-friendly Codex UI before an
+official Linux Codex app exists.
+
 The app is a Next.js App Router application with Tailwind, shadcn/ui, and AI Elements components. UI routes live under `/threads` and `/thread/[threadId]`; API endpoints are implemented as Next route handlers under `/api`.
 
 ## Run
