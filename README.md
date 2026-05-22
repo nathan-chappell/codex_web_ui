@@ -31,6 +31,7 @@ codex-web-ui --help
 codex-web-ui --port 4545
 CODEX_WEB_UI_PASSWORD='change-me' codex-web-ui --host 0.0.0.0
 codex-web-ui --app-server-socket "$PWD/tmp/codex-app-server.sock" --model gpt-5.5 --effort high
+codex-web-ui --config ./codex-webgui.json
 ```
 
 By default the CLI binds to `127.0.0.1:4545`. Binding to a non-loopback host
@@ -39,6 +40,13 @@ the app can read local files through authenticated preview/download endpoints.
 
 For source or git installs, run `codex-web-ui --build` once if the package does
 not include a `.next` production build.
+
+The CLI uses these directory defaults:
+
+- Next app cwd: the package install directory.
+- Codex cwd: the current working directory where `codex-web-ui` was launched.
+- Runtime data: `~/.codex-webgui/data`.
+- Uploads: `~/.codex-webgui/data/uploads`.
 
 Useful CLI options:
 
@@ -52,6 +60,49 @@ codex-web-ui \
   --effort high \
   --data-dir "$PWD/data"
 ```
+
+## Configuration
+
+The CLI loads JSON config in this order:
+
+1. `--config <path>` / `-c <path>`
+2. `./codex-webgui.json`
+3. `~/.codex-webgui/codex-webgui.json`
+4. `~/.codex-webgui/config.json`
+
+CLI options override environment variables; environment variables override the
+config file; the config file overrides defaults.
+
+Example `codex-webgui.json`:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 4545,
+  "appServerSocket": "./tmp/codex-app-server.sock",
+  "cwd": "/path/to/project",
+  "model": "gpt-5.5",
+  "reasoningEffort": "high",
+  "dataDir": "~/.codex-webgui/data",
+  "uploadDir": "~/.codex-webgui/data/uploads",
+  "allowedOrigins": "http://localhost:*,http://127.0.0.1:*"
+}
+```
+
+Prefer `CODEX_WEB_UI_PASSWORD` and `CODEX_WEB_UI_AUTH_SECRET` environment
+variables for secrets instead of storing them in the config file.
+
+## Persistence
+
+The server writes:
+
+- `server.jsonl` under `CODEX_WEB_UI_DATA_DIR`.
+- `sessions/<thread-id>.jsonl` under `CODEX_WEB_UI_DATA_DIR`.
+- `sessions/index.json` under `CODEX_WEB_UI_DATA_DIR`.
+- Uploaded files under `CODEX_WEB_UI_UPLOAD_DIR`.
+
+The browser also stores the 4-hour bearer token and UI layout preferences in
+`localStorage`.
 
 The server is protected by password auth. Login exchanges
 `CODEX_WEB_UI_PASSWORD` for a 4-hour bearer JWT stored by the browser in

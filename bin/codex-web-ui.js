@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { parseArgs as parseNodeArgs } from "node:util";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const launchCwd = process.cwd();
+const userConfigDir = join(homedir(), ".codex-webgui");
 const require = createRequire(import.meta.url);
 const nextBin = require.resolve("next/dist/bin/next");
 
@@ -17,27 +21,32 @@ if (options.help) {
   process.exit(0);
 }
 
+const configPath = resolveConfigPath(options.config);
+const config = configPath ? readConfig(configPath) : {};
 const env = { ...process.env };
-const host = options.host ?? env.HOST ?? "127.0.0.1";
-const port = options.port ?? env.PORT ?? "4545";
+const host = pick("host", "HOST", "127.0.0.1");
+const port = String(pick("port", "PORT", "4545"));
+const dataDir = resolvePath(pick("dataDir", "CODEX_WEB_UI_DATA_DIR", join(userConfigDir, "data")));
+const uploadDir = resolvePath(pick("uploadDir", "CODEX_WEB_UI_UPLOAD_DIR", join(dataDir, "uploads")));
+const codexCwd = resolvePath(pick("cwd", "CODEX_CWD", launchCwd));
 
 setEnv(env, "HOST", host);
 setEnv(env, "PORT", port);
-setEnv(env, "CODEX_WEB_UI_PASSWORD", options.password);
-setEnv(env, "CODEX_WEB_UI_AUTH_SECRET", options.authSecret);
-setEnv(env, "CODEX_WEB_UI_ALLOWED_ORIGINS", options.allowedOrigins);
-setEnv(env, "CODEX_WEB_UI_DATA_DIR", options.dataDir);
-setEnv(env, "CODEX_WEB_UI_UPLOAD_DIR", options.uploadDir);
-setEnv(env, "CODEX_APP_SERVER_SOCKET", options.appServerSocket);
-setEnv(env, "CODEX_COMMAND", options.codexCommand);
-setEnv(env, "CODEX_CWD", options.cwd);
-setEnv(env, "CODEX_MODEL", options.model);
-setEnv(env, "CODEX_REASONING_EFFORT", options.reasoningEffort);
+setEnv(env, "CODEX_WEB_UI_PASSWORD", pick("password", "CODEX_WEB_UI_PASSWORD"));
+setEnv(env, "CODEX_WEB_UI_AUTH_SECRET", pick("authSecret", "CODEX_WEB_UI_AUTH_SECRET"));
+setEnv(env, "CODEX_WEB_UI_ALLOWED_ORIGINS", pick("allowedOrigins", "CODEX_WEB_UI_ALLOWED_ORIGINS"));
+setEnv(env, "CODEX_WEB_UI_DATA_DIR", dataDir);
+setEnv(env, "CODEX_WEB_UI_UPLOAD_DIR", uploadDir);
+setEnv(env, "CODEX_APP_SERVER_SOCKET", resolvePath(pick("appServerSocket", "CODEX_APP_SERVER_SOCKET")));
+setEnv(env, "CODEX_COMMAND", pick("codexCommand", "CODEX_COMMAND"));
+setEnv(env, "CODEX_CWD", codexCwd);
+setEnv(env, "CODEX_MODEL", pick("model", "CODEX_MODEL"));
+setEnv(env, "CODEX_REASONING_EFFORT", pick("reasoningEffort", "CODEX_REASONING_EFFORT"));
 
 validatePort(port);
-validateSafety({ host, password: env.CODEX_WEB_UI_PASSWORD, allowPublicWithoutPassword: options.allowPublicWithoutPassword });
+validateSafety({ host, password: env.CODEX_WEB_UI_PASSWORD, allowPublicWithoutPassword: pickBoolean("allowPublicWithoutPassword", false) });
 
-if (options.build) {
+if (pickBoolean("build", false)) {
   await runNext(["build"], env);
 }
 
@@ -46,6 +55,12 @@ if (!existsSync(join(packageRoot, ".next", "BUILD_ID"))) {
 }
 
 console.log(`codex-web-ui listening on http://${host}:${port}`);
+console.log(`codex-web-ui app cwd: ${packageRoot}`);
+console.log(`codex default cwd: ${env.CODEX_CWD}`);
+console.log(`runtime data dir: ${env.CODEX_WEB_UI_DATA_DIR}`);
+if (configPath) {
+  console.log(`config file: ${configPath}`);
+}
 if (!env.CODEX_WEB_UI_PASSWORD) {
   console.warn("warning: CODEX_WEB_UI_PASSWORD is not set. Login is disabled and API routes remain unauthorized.");
 }
@@ -56,58 +71,143 @@ if (!env.CODEX_APP_SERVER_SOCKET) {
 await runNext(["start", "--hostname", host, "--port", port], env);
 
 function parseArgs(args) {
-  const parsed = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--help" || arg === "-h") {
-      parsed.help = true;
-      continue;
-    }
-    if (arg === "--build") {
-      parsed.build = true;
-      continue;
-    }
-    if (arg === "--allow-public-without-password") {
-      parsed.allowPublicWithoutPassword = true;
-      continue;
-    }
-    const key = arg.startsWith("--") ? arg.slice(2) : "";
-    const optionName = optionKey(key);
-    if (!optionName) {
-      fail(`Unknown option: ${arg}`);
-    }
-    const value = args[index + 1];
-    if (!value || value.startsWith("--")) {
-      fail(`Missing value for ${arg}`);
-    }
-    parsed[optionName] = value;
-    index += 1;
+  try {
+    const { values } = parseNodeArgs({
+      args,
+      allowPositionals: false,
+      options: {
+        "allow-public-without-password": { type: "boolean" },
+        "allowed-origins": { type: "string" },
+        "app-server-socket": { type: "string" },
+        "auth-secret": { type: "string" },
+        build: { type: "boolean" },
+        config: { type: "string", short: "c" },
+        "codex-command": { type: "string" },
+        cwd: { type: "string" },
+        "data-dir": { type: "string" },
+        effort: { type: "string" },
+        help: { type: "boolean", short: "h" },
+        host: { type: "string" },
+        model: { type: "string" },
+        password: { type: "string" },
+        port: { type: "string" },
+        "reasoning-effort": { type: "string" },
+        "upload-dir": { type: "string" }
+      }
+    });
+    return {
+      allowPublicWithoutPassword: values["allow-public-without-password"],
+      allowedOrigins: values["allowed-origins"],
+      appServerSocket: values["app-server-socket"],
+      authSecret: values["auth-secret"],
+      build: values.build,
+      codexCommand: values["codex-command"],
+      config: values.config,
+      cwd: values.cwd,
+      dataDir: values["data-dir"],
+      help: values.help,
+      host: values.host,
+      model: values.model,
+      password: values.password,
+      port: values.port,
+      reasoningEffort: values["reasoning-effort"] ?? values.effort,
+      uploadDir: values["upload-dir"]
+    };
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-  return parsed;
-}
-
-function optionKey(key) {
-  return {
-    host: "host",
-    port: "port",
-    password: "password",
-    "auth-secret": "authSecret",
-    "allowed-origins": "allowedOrigins",
-    "data-dir": "dataDir",
-    "upload-dir": "uploadDir",
-    "app-server-socket": "appServerSocket",
-    "codex-command": "codexCommand",
-    cwd: "cwd",
-    model: "model",
-    effort: "reasoningEffort",
-    "reasoning-effort": "reasoningEffort"
-  }[key];
 }
 
 function setEnv(env, key, value) {
   if (value !== undefined) {
-    env[key] = value;
+    env[key] = String(value);
   }
+}
+
+function pick(name, envKey, fallback) {
+  return options[name] ?? (envKey ? env[envKey] : undefined) ?? config[name] ?? fallback;
+}
+
+function pickBoolean(name, fallback) {
+  return booleanValue(options[name] ?? config[name], fallback);
+}
+
+function booleanValue(value, fallback) {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    if (["1", "true", "yes", "on"].includes(value.toLowerCase())) return true;
+    if (["0", "false", "no", "off"].includes(value.toLowerCase())) return false;
+  }
+  return fallback;
+}
+
+function resolvePath(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const text = String(value);
+  if (text === "~") {
+    return homedir();
+  }
+  if (text.startsWith("~/")) {
+    return join(homedir(), text.slice(2));
+  }
+  return resolve(launchCwd, text);
+}
+
+function resolveConfigPath(explicitPath) {
+  if (explicitPath) {
+    const resolved = resolvePath(explicitPath);
+    if (!existsSync(resolved)) {
+      fail(`Config file not found: ${resolved}`);
+    }
+    return resolved;
+  }
+  const candidates = [
+    join(launchCwd, "codex-webgui.json"),
+    join(userConfigDir, "codex-webgui.json"),
+    join(userConfigDir, "config.json")
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function readConfig(filePath) {
+  try {
+    const raw = JSON.parse(readFileSync(filePath, "utf8"));
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      fail(`Config file must contain a JSON object: ${filePath}`);
+    }
+    return normalizeConfig(raw);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      fail(`Invalid JSON config: ${filePath}`);
+    }
+    throw error;
+  }
+}
+
+function normalizeConfig(raw) {
+  return {
+    allowPublicWithoutPassword: raw.allowPublicWithoutPassword ?? raw["allow-public-without-password"],
+    allowedOrigins: raw.allowedOrigins ?? raw["allowed-origins"],
+    appServerSocket: raw.appServerSocket ?? raw["app-server-socket"],
+    authSecret: raw.authSecret ?? raw["auth-secret"],
+    build: raw.build,
+    codexCommand: raw.codexCommand ?? raw["codex-command"],
+    cwd: raw.cwd,
+    dataDir: raw.dataDir ?? raw["data-dir"],
+    host: raw.host,
+    model: raw.model,
+    password: raw.password,
+    port: raw.port,
+    reasoningEffort: raw.reasoningEffort ?? raw["reasoning-effort"] ?? raw.effort,
+    uploadDir: raw.uploadDir ?? raw["upload-dir"]
+  };
 }
 
 function validatePort(port) {
@@ -160,6 +260,10 @@ function printHelp() {
 Starts the Codex Web UI using Next.js production mode.
 
 Options:
+  -c, --config <path>           JSON config file. Default search:
+                                ./codex-webgui.json,
+                                ~/.codex-webgui/codex-webgui.json,
+                                ~/.codex-webgui/config.json
   --host <host>                 Host to bind. Default: 127.0.0.1
   --port <port>                 Port to bind. Default: 4545
   --password <password>         Set CODEX_WEB_UI_PASSWORD for this process; env is safer
@@ -176,6 +280,14 @@ Options:
   --allow-public-without-password
                                 Allow non-loopback bind without a password
   -h, --help                    Show help
+
+Defaults:
+  Next app cwd:                 package install directory
+  Codex cwd:                    current working directory
+  Data dir:                     ~/.codex-webgui/data
+  Upload dir:                   ~/.codex-webgui/data/uploads
+
+Precedence: CLI options > environment variables > config file > defaults.
 `);
 }
 
