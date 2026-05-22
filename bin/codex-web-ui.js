@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,14 @@ const userConfigDir = join(homedir(), ".codex-webgui");
 const require = createRequire(import.meta.url);
 const nextBin = require.resolve("next/dist/bin/next");
 
-const options = parseArgs(process.argv.slice(2));
+const rawArgs = process.argv.slice(2);
+
+if (rawArgs[0] === "app-server") {
+  await runAppServerCommand(parseAppServerArgs(rawArgs.slice(1)));
+  process.exit(0);
+}
+
+const options = parseArgs(rawArgs);
 
 if (options.help) {
   printHelp();
@@ -142,6 +149,165 @@ function parseArgs(args) {
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
+}
+
+function parseAppServerArgs(args) {
+  try {
+    const { positionals, values } = parseNodeArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        "app-server-socket": { type: "string" },
+        "codex-command": { type: "string" },
+        help: { type: "boolean", short: "h" },
+        "log-file": { type: "string" },
+        "pid-file": { type: "string" },
+        socket: { type: "string" }
+      }
+    });
+    const socket = resolvePath(values.socket ?? values["app-server-socket"] ?? process.env.CODEX_APP_SERVER_SOCKET ?? join(launchCwd, "tmp", "codex-app-server.sock"));
+    const runtimeDir = dirname(socket);
+    return {
+      action: positionals[0] ?? (values.help ? "help" : "status"),
+      command: values["codex-command"] ?? process.env.CODEX_COMMAND ?? "codex",
+      help: values.help,
+      logFile: resolvePath(values["log-file"] ?? process.env.CODEX_APP_SERVER_LOG_FILE ?? join(runtimeDir, "codex-app-server.log")),
+      pidFile: resolvePath(values["pid-file"] ?? process.env.CODEX_APP_SERVER_PID_FILE ?? join(runtimeDir, "codex-app-server.pid")),
+      socket
+    };
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function runAppServerCommand(options) {
+  if (options.help || options.action === "help") {
+    printAppServerHelp();
+    return;
+  }
+  if (!["start", "stop", "restart", "status"].includes(options.action)) {
+    fail(`Unknown app-server command: ${options.action}`);
+  }
+  if (options.action === "start") {
+    startAppServer(options);
+    return;
+  }
+  if (options.action === "stop") {
+    await stopAppServer(options);
+    return;
+  }
+  if (options.action === "restart") {
+    await stopAppServer(options, { quiet: true });
+    startAppServer(options);
+    return;
+  }
+  printAppServerStatus(options);
+}
+
+function startAppServer(options) {
+  const existingPid = readPid(options.pidFile);
+  if (existingPid && isPidRunning(existingPid)) {
+    console.log(`codex app-server already running: pid=${existingPid}`);
+    console.log(`socket: ${options.socket}`);
+    return;
+  }
+  mkdirSync(dirname(options.socket), { recursive: true });
+  mkdirSync(dirname(options.pidFile), { recursive: true });
+  mkdirSync(dirname(options.logFile), { recursive: true });
+  if (existsSync(options.socket)) {
+    rmSync(options.socket, { force: true });
+  }
+  const logFd = openSync(options.logFile, "a");
+  const child = spawn(options.command, ["app-server", "--listen", `unix://${options.socket}`], {
+    cwd: launchCwd,
+    detached: true,
+    env: process.env,
+    stdio: ["ignore", logFd, logFd]
+  });
+  child.unref();
+  closeSync(logFd);
+  if (!child.pid) {
+    fail("Failed to start codex app-server");
+  }
+  writeFileSync(options.pidFile, `${child.pid}\n`);
+  console.log(`codex app-server started: pid=${child.pid}`);
+  console.log(`socket: ${options.socket}`);
+  console.log(`log: ${options.logFile}`);
+}
+
+async function stopAppServer(options, { quiet = false } = {}) {
+  const pid = readPid(options.pidFile);
+  if (!pid || !isPidRunning(pid)) {
+    if (existsSync(options.socket)) {
+      rmSync(options.socket, { force: true });
+    }
+    if (!quiet) {
+      console.log("codex app-server is not running");
+    }
+    return;
+  }
+  killAppServerPid(pid, "SIGTERM");
+  await waitForPidExit(pid, 2500);
+  if (isPidRunning(pid)) {
+    killAppServerPid(pid, "SIGKILL");
+    await waitForPidExit(pid, 1000);
+  }
+  if (existsSync(options.socket)) {
+    rmSync(options.socket, { force: true });
+  }
+  if (!quiet) {
+    console.log(`codex app-server stopped: pid=${pid}`);
+  }
+}
+
+function printAppServerStatus(options) {
+  const pid = readPid(options.pidFile);
+  const running = Boolean(pid && isPidRunning(pid));
+  console.log(`codex app-server ${running ? "running" : "stopped"}${pid ? `: pid=${pid}` : ""}`);
+  console.log(`socket: ${options.socket}${existsSync(options.socket) ? " (present)" : " (missing)"}`);
+  console.log(`pid file: ${options.pidFile}`);
+  console.log(`log: ${options.logFile}`);
+}
+
+function readPid(pidFile) {
+  if (!existsSync(pidFile)) {
+    return null;
+  }
+  const pid = Number(readFileSync(pidFile, "utf8").trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function isPidRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function killAppServerPid(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+function waitForPidExit(pid, timeoutMs) {
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (!isPidRunning(pid) || Date.now() - startedAt >= timeoutMs) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 100);
+  });
 }
 
 function setEnv(env, key, value) {
@@ -309,6 +475,7 @@ function runNext(args, env) {
 
 function printHelp() {
   console.log(`Usage: codex-web-ui [options]
+       codex-web-ui app-server <start|stop|restart|status> [options]
 
 Starts the Codex Web UI using Next.js production mode.
 
@@ -352,6 +519,27 @@ Defaults:
 Precedence: CLI options > environment variables > config file > defaults.
 If approval-policy, sandbox, or full-control is specified by CLI/env/config,
 the server locks that policy and browser requests cannot override it.
+`);
+}
+
+function printAppServerHelp() {
+  console.log(`Usage: codex-web-ui app-server <start|stop|restart|status> [options]
+
+Manages a detached local codex app-server side process.
+
+Options:
+  --socket <path>               Unix socket path. Default:
+                                ./tmp/codex-app-server.sock
+  --app-server-socket <path>    Alias for --socket
+  --pid-file <path>             PID file. Default: beside the socket
+  --log-file <path>             Log file. Default: beside the socket
+  --codex-command <command>     Codex command. Default: codex
+  -h, --help                    Show help
+
+Examples:
+  codex-web-ui app-server start
+  codex-web-ui app-server status
+  codex-web-ui app-server restart --socket ./tmp/codex-app-server.sock
 `);
 }
 

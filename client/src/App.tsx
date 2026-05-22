@@ -79,7 +79,7 @@ const defaultSettings: UiSettings = {
 type ComposerAction = "send" | "steer";
 type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAmendment" | "decline";
 type MobilePane = "sessions" | "thread";
-type ThreadPaneCount = 1 | 2 | 4;
+type ThreadPaneCount = 1 | 2;
 type StoredLayout = {
   activePaneIndex?: number;
   mobilePane?: MobilePane;
@@ -162,6 +162,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
   const activePaneIndexRef = useRef(activePaneIndex);
   const openThreadIdsRef = useRef<(string | null)[]>(openThreadIds);
+  const openThreadsRef = useRef<Record<string, Thread>>({});
   const restoredLayoutThreadsRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean; refreshEligible: boolean } | null>(null);
   const resizingSidebarRef = useRef(false);
@@ -173,6 +174,10 @@ export default function App({ initialThreadId = null }: AppProps) {
   const longPressTimerRef = useRef<number | null>(null);
   const longPressActivatedRef = useRef(false);
   const sessionClickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    openThreadsRef.current = openThreads;
+  }, [openThreads]);
 
   useEffect(() => {
     return () => {
@@ -522,7 +527,7 @@ export default function App({ initialThreadId = null }: AppProps) {
 
         <section className={`thread-workspace panes-${threadPaneCount}`}>
           <div className="thread-view-controls" aria-label="Thread layout">
-            {[1, 2, 4].map((count) => (
+            {[1, 2].map((count) => (
               <button
                 className={threadPaneCount === count ? "selected" : ""}
                 key={count}
@@ -1031,13 +1036,19 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   function rememberOpenThread(thread: Thread, paneIndex = activePaneIndexRef.current, assignPane = true) {
     const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
-    setOpenThreads((current) => ({ ...current, [thread.id]: thread }));
+    let rememberedThread = reconcileThreadUpdate(thread, openThreadsRef.current[thread.id]);
+    setOpenThreads((current) => {
+      rememberedThread = reconcileThreadUpdate(thread, current[thread.id]);
+      const next = { ...current, [thread.id]: rememberedThread };
+      openThreadsRef.current = next;
+      return next;
+    });
     if (assignPane) {
       setPaneThreadId(targetPaneIndex, thread.id);
     }
     if (targetPaneIndex === activePaneIndexRef.current && openThreadIdsRef.current[targetPaneIndex] === thread.id) {
       setSelectedThreadId(thread.id);
-      setSelectedThread(thread);
+      setSelectedThread(rememberedThread);
     }
   }
 
@@ -1356,6 +1367,13 @@ export default function App({ initialThreadId = null }: AppProps) {
         applyAgentMessageDelta(threadId, turnId, itemId, delta);
       }
     }
+    if (threadId && method === "item/started") {
+      const item = asRecord(params.item);
+      const turnId = typeof params.turnId === "string" ? params.turnId : null;
+      if (turnId && typeof item.id === "string" && typeof item.type === "string") {
+        applyStartedItem(threadId, turnId, item as unknown as ThreadItem);
+      }
+    }
     if (threadId && method === "item/completed") {
       const item = asRecord(params.item);
       const turnId = typeof params.turnId === "string" ? params.turnId : null;
@@ -1371,7 +1389,13 @@ export default function App({ initialThreadId = null }: AppProps) {
   function patchOpenThread(threadId: string, updater: (thread: Thread) => Thread) {
     setOpenThreads((current) => {
       const thread = current[threadId];
-      return thread ? { ...current, [threadId]: updater(thread) } : current;
+      if (!thread) {
+        return current;
+      }
+      const nextThread = updater(thread);
+      const next = { ...current, [threadId]: nextThread };
+      openThreadsRef.current = next;
+      return next;
     });
     setSelectedThread((current) => (current?.id === threadId ? updater(current) : current));
   }
@@ -1387,6 +1411,13 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   function applyCompletedItem(threadId: string, turnId: string, item: ThreadItem) {
     patchOpenThread(threadId, (thread) => patchThreadItem(thread, turnId, item.id, () => item));
+  }
+
+  function applyStartedItem(threadId: string, turnId: string, item: ThreadItem) {
+    patchOpenThread(threadId, (thread) => patchThreadItem(thread, turnId, item.id, (current) => ({
+      ...current,
+      ...item
+    })));
   }
 
   function rememberActiveTurn(thread: Thread) {
@@ -2011,6 +2042,50 @@ function patchTurnItem(turn: Turn, itemId: string, updateItem: (item: ThreadItem
     nextItems.push(updateItem({ id: itemId, type: "agentMessage" }));
   }
   return { ...turn, items: nextItems };
+}
+
+function reconcileThreadUpdate(incoming: Thread, existing: Thread | undefined): Thread {
+  if (!existing) {
+    return incoming;
+  }
+  if (!incoming.turns?.length) {
+    return existing.turns?.length ? { ...incoming, turns: existing.turns } : incoming;
+  }
+  if (!existing.turns?.length) {
+    return incoming;
+  }
+  const existingTurns = new Map(existing.turns.map((turn) => [turn.id, turn]));
+  const incomingIds = new Set(incoming.turns.map((turn) => turn.id));
+  const transientTurns = existing.turns.filter((turn) => !incomingIds.has(turn.id) && isTransientTurn(turn));
+  return {
+    ...incoming,
+    turns: [
+      ...incoming.turns.map((turn) => reconcileTurnUpdate(turn, existingTurns.get(turn.id))),
+      ...transientTurns
+    ]
+  };
+}
+
+function reconcileTurnUpdate(incoming: Turn, existing: Turn | undefined): Turn {
+  if (!existing?.items?.length || !shouldPreserveTransientItems(incoming, existing)) {
+    return incoming;
+  }
+  const incomingItems = incoming.items ?? [];
+  const incomingIds = new Set(incomingItems.map((item) => item.id));
+  const transientItems = existing.items.filter((item) => !incomingIds.has(item.id));
+  if (transientItems.length === 0) {
+    return incoming;
+  }
+  return { ...incoming, items: [...incomingItems, ...transientItems] };
+}
+
+function shouldPreserveTransientItems(incoming: Turn, existing: Turn): boolean {
+  return isTransientTurn(incoming) || isTransientTurn(existing);
+}
+
+function isTransientTurn(turn: Turn): boolean {
+  const status = String(turn.status ?? "").toLowerCase();
+  return status === "inprogress";
 }
 
 const ThreadItemView = memo(function ThreadItemView({
@@ -2648,7 +2723,8 @@ const Composer = memo(function Composer({
     try {
       const attachment = await uploadAttachment(file);
       const current = readDraft();
-      setDraftValue(current.trim() ? `${current}\n${attachment.path}` : attachment.path);
+      const reference = markdownFileReference(attachment.name, attachment.path);
+      setDraftValue(current.trim() ? `${current}\n${reference}` : reference);
     } catch (error) {
       onError(error);
     } finally {
@@ -2774,6 +2850,14 @@ function sendButtonLabel(activeTurnId: string | null, submittingAction: Composer
     return activeTurnId ? "Enqueuing" : "Sending";
   }
   return activeTurnId ? "Enqueue" : "Send";
+}
+
+function markdownFileReference(label: string, pathValue: string): string {
+  return `[${escapeMarkdownLinkLabel(label || labelForPath(pathValue))}](${encodeURI(pathValue)})`;
+}
+
+function escapeMarkdownLinkLabel(value: string): string {
+  return value.replace(/([\\[\]])/g, "\\$1");
 }
 
 function statusClass(status: string): string {
@@ -3118,7 +3202,13 @@ function initialActivePaneIndex(layout: StoredLayout): number {
 }
 
 function parseThreadPaneCount(value: unknown): ThreadPaneCount | undefined {
-  return value === 1 || value === 2 || value === 4 ? value : undefined;
+  if (value === 1 || value === 2) {
+    return value;
+  }
+  if (value === 4) {
+    return 2;
+  }
+  return undefined;
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {

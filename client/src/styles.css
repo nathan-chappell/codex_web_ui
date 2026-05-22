@@ -517,11 +517,6 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.panes-4 .thread-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-}
-
 .thread-panel.active {
   outline: 2px solid rgba(12, 124, 134, 0.4);
   outline-offset: -2px;
@@ -1997,8 +1992,7 @@ textarea {
 
   .thread-grid,
   .panes-1 .thread-grid,
-  .panes-2 .thread-grid,
-  .panes-4 .thread-grid {
+  .panes-2 .thread-grid {
     display: block;
     height: 100%;
   }

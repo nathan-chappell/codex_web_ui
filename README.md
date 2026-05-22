@@ -142,7 +142,7 @@ For development, run Next directly:
 npm run dev
 ```
 
-For the full local service, run the Codex app-server sidecar as a plain shell
+For the full local service, run the Codex app-server sidecar as a separate
 process. This keeps the Codex app-server out of npm lifecycle watchers and
 leaves PID/log files under `tmp/`. Next talks to the sidecar through the Unix
 socket in `CODEX_APP_SERVER_SOCKET`.
@@ -150,24 +150,28 @@ socket in `CODEX_APP_SERVER_SOCKET`.
 Start the sidecar:
 
 ```bash
-mkdir -p tmp
-export CODEX_APP_SERVER_SOCKET="$PWD/tmp/codex-app-server.sock"
-rm -f "$CODEX_APP_SERVER_SOCKET"
-nohup codex app-server --listen "unix://$CODEX_APP_SERVER_SOCKET" > tmp/codex-app-server.log 2>&1 &
-echo $! > tmp/codex-app-server.pid
+npm run app-server:start
+npm run app-server:status
 ```
 
 Then build and run Next against that socket:
 
 ```bash
+kill "$(cat tmp/backend.pid)" 2>/dev/null || true
 npm run build
 CODEX_APP_SERVER_SOCKET="$PWD/tmp/codex-app-server.sock" CODEX_WEB_UI_PASSWORD='change-me' npm start
 ```
 
-To stop the sidecar:
+Do not run `next build` while `next start` is serving the same `.next`
+directory; stop the backend first, then rebuild and restart it.
+
+Sidecar commands:
 
 ```bash
-kill "$(cat tmp/codex-app-server.pid)"
+npm run app-server:start
+npm run app-server:stop
+npm run app-server:restart
+npm run app-server:status
 ```
 
 To expose the running server through ngrok:
