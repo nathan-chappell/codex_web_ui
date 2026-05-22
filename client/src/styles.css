@@ -1922,6 +1922,97 @@ textarea {
   gap: 8px;
 }
 
+.section-heading,
+.mcp-server-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.section-heading {
+  min-width: 0;
+}
+
+.section-heading > div {
+  min-width: 0;
+}
+
+.mcp-status-section {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.mcp-server-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-server-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfc;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mcp-server-card-header strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-server-card-header span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted-text);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 7px;
+  text-transform: uppercase;
+}
+
+.mcp-server-card p {
+  color: var(--muted-text);
+  font-size: 12px;
+  margin: 0;
+}
+
+.mcp-tool-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcp-tool-list code {
+  background: #eef3f5;
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.mcp-server-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(220px, 1.3fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.mcp-server-form .bearer-token-field {
+  grid-column: 1 / -1;
+}
+
+.mcp-server-form .primary-button {
+  justify-self: start;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2314,6 +2405,15 @@ textarea {
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .section-heading,
+  .mcp-server-form {
+    grid-template-columns: 1fr;
+  }
+
+  .section-heading {
+    align-items: stretch;
   }
 
   .status-grid {

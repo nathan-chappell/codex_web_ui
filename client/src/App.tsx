@@ -13,11 +13,13 @@ import {
   FolderGit2,
   GitFork,
   Home,
+  KeyRound,
   LogOut,
   MessageSquarePlus,
   Minimize2,
   Paperclip,
   PauseCircle,
+  Plug,
   Plus,
   Radiation,
   RefreshCw,
@@ -72,20 +74,23 @@ import {
   downloadReferencedFile,
   getAuth,
   getClientRequests,
+  getMcpServers,
   getStatus,
   login,
   logout,
   openEventStream,
   readReferencedFile,
   recoverAppServer,
+  reloadMcpServers,
   respondClientRequest,
   restartServer,
   rpc,
+  saveMcpServer,
   uploadAttachment
 } from "./api";
 import type { AuthEventStream } from "./api";
 import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
-import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, ThreadTokenUsage, TokenUsageBreakdown, Turn, UiSettings } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, McpServerList, McpServerStatus, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, ThreadTokenUsage, TokenUsageBreakdown, Turn, UiSettings } from "./types";
 
 const defaultSettings: UiSettings = {
   cwd: "",
@@ -174,6 +179,8 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [respondingClientRequestIds, setRespondingClientRequestIds] = useState<Set<string>>(new Set());
   const [threadPermissionOverrides, setThreadPermissionOverrides] = useState<Record<string, ThreadPermissionOverride>>(() => readStoredThreadPermissions());
   const [pullRefresh, setPullRefresh] = useState<{ active: boolean; distance: number; refreshing: boolean }>({ active: false, distance: 0, refreshing: false });
+  const [mcpServers, setMcpServers] = useState<McpServerList | null>(null);
+  const [mcpLoading, setMcpLoading] = useState(false);
 
   const eventSourceRef = useRef<AuthEventStream | null>(null);
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
@@ -296,6 +303,13 @@ export default function App({ initialThreadId = null }: AppProps) {
     }
     void selectThread(initialThreadId, targetPaneIndex, false);
   }, [authenticated, initialThreadId]);
+
+  useEffect(() => {
+    if (!authenticated || !statusOpen) {
+      return;
+    }
+    void loadMcpServerStatus();
+  }, [authenticated, statusOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -673,11 +687,15 @@ export default function App({ initialThreadId = null }: AppProps) {
       {statusOpen && (
         <StatusModal
           activeThread={activeThread}
+          mcpLoading={mcpLoading}
+          mcpServers={mcpServers}
           rateLimits={rateLimits}
           status={serverStatus}
           onClose={() => setStatusOpen(false)}
           onRecover={recoverAppServerFromUi}
+          onRefreshMcp={reloadMcpServerStatus}
           onRefresh={refreshStatus}
+          onSaveMcpServer={saveMcpServerFromUi}
         />
       )}
       {fileExplorerOpen && (
@@ -1016,6 +1034,42 @@ export default function App({ initialThreadId = null }: AppProps) {
       setClientRequests(Object.fromEntries(requests.map((request) => [clientRequestKey(request.id), request])));
     } catch (error) {
       showToast(error);
+    }
+  }
+
+  async function loadMcpServerStatus() {
+    setMcpLoading(true);
+    try {
+      setMcpServers(await getMcpServers());
+    } catch (error) {
+      showToast(error);
+    } finally {
+      setMcpLoading(false);
+    }
+  }
+
+  async function reloadMcpServerStatus() {
+    setMcpLoading(true);
+    try {
+      setMcpServers(await reloadMcpServers());
+      showToast("MCP servers reloaded");
+    } catch (error) {
+      showToast(error);
+    } finally {
+      setMcpLoading(false);
+    }
+  }
+
+  async function saveMcpServerFromUi(input: { name: string; url: string; bearerToken?: string }) {
+    setMcpLoading(true);
+    try {
+      setMcpServers(await saveMcpServer(input));
+      showToast("MCP server saved and reloaded");
+    } catch (error) {
+      showToast(error);
+      throw error;
+    } finally {
+      setMcpLoading(false);
     }
   }
 
@@ -1489,6 +1543,11 @@ export default function App({ initialThreadId = null }: AppProps) {
     const method = typeof payload.method === "string" ? payload.method : "";
     const params = asRecord(payload.params);
     const threadId = typeof params.threadId === "string" ? params.threadId : threadIdFromThread(params.thread);
+
+    if (method === "mcpServer/status/updated") {
+      void loadMcpServerStatus();
+      return;
+    }
 
     if (method === "turn/started" && threadId) {
       const turn = asRecord(params.turn);
@@ -2079,20 +2138,48 @@ function ApprovalRequestCard({
 
 function StatusModal({
   activeThread,
+  mcpLoading,
+  mcpServers,
   rateLimits,
   status,
   onClose,
   onRecover,
-  onRefresh
+  onRefresh,
+  onRefreshMcp,
+  onSaveMcpServer
 }: {
   activeThread: Thread | null;
+  mcpLoading: boolean;
+  mcpServers: McpServerList | null;
   rateLimits: RateLimitSnapshot | null;
   status: ServerStatus;
   onClose: () => void;
   onRecover: () => Promise<void>;
   onRefresh: () => Promise<void>;
+  onRefreshMcp: () => Promise<void>;
+  onSaveMcpServer: (input: { name: string; url: string; bearerToken?: string }) => Promise<void>;
 }) {
   const socket = typeof status.config?.appServerSocketPath === "string" ? status.config.appServerSocketPath : "stdio / owned";
+  const [serverName, setServerName] = useState("agro-ontology");
+  const [serverUrl, setServerUrl] = useState("http://127.0.0.1:3000/api/mcp");
+  const [bearerToken, setBearerToken] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSaveMcpServer(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await onSaveMcpServer({
+        name: serverName,
+        url: serverUrl,
+        ...(bearerToken.trim() ? { bearerToken } : {})
+      });
+      setBearerToken("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="modal-backdrop">
       <section className="modal status-modal" role="dialog" aria-modal="true" aria-labelledby="status-title">
@@ -2114,6 +2201,44 @@ function StatusModal({
           <StatusDetail label="Weekly remaining" value={<QuotaMetric value={rateLimitRemainingPercent(rateLimits, "weekly")} />} />
         </div>
         {status.error && <p className="error-text">{status.error}</p>}
+        <section className="status-section mcp-status-section">
+          <header className="section-heading">
+            <div>
+              <h3>MCP Servers</h3>
+              <p className="muted">Config is written to {mcpServers?.configPath || "~/.codex/config.toml"} and reloaded without stopping the app-server.</p>
+            </div>
+            <button className="secondary-button" type="button" onClick={() => void onRefreshMcp()} disabled={mcpLoading}>
+              <RefreshCw size={16} /> Reload
+            </button>
+          </header>
+          <div className="mcp-server-list">
+            {mcpServers?.servers.length ? (
+              mcpServers.servers.map((server) => <McpServerCard key={server.name} server={server} />)
+            ) : (
+              <div className="empty-state inline">
+                <h2>{mcpLoading ? "Loading MCP servers" : "No MCP servers"}</h2>
+                <p>Add a streamable HTTP MCP server below.</p>
+              </div>
+            )}
+          </div>
+          <form className="mcp-server-form" onSubmit={handleSaveMcpServer}>
+            <label className="field">
+              <span>Name</span>
+              <input value={serverName} onChange={(event) => setServerName(event.target.value)} placeholder="agro-ontology" />
+            </label>
+            <label className="field">
+              <span>URL</span>
+              <input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="http://127.0.0.1:3000/api/mcp" />
+            </label>
+            <label className="field bearer-token-field">
+              <span>Bearer token</span>
+              <input value={bearerToken} onChange={(event) => setBearerToken(event.target.value)} type="password" placeholder="Optional; blank preserves existing token" />
+            </label>
+            <button className="primary-button" type="submit" disabled={saving || mcpLoading}>
+              <KeyRound size={16} /> Save MCP
+            </button>
+          </form>
+        </section>
         <p className="muted">Rate limits use the app-server account quota snapshot. Recover checks the sidecar PID and socket, then reconnects this UI.</p>
         <footer className="modal-actions">
           <button className="secondary-button" type="button" onClick={() => void onRecover()}>
@@ -2125,6 +2250,24 @@ function StatusModal({
         </footer>
       </section>
     </div>
+  );
+}
+
+function McpServerCard({ server }: { server: McpServerStatus }) {
+  const authLabel = server.authStatus === "bearerToken" ? "token" : server.authStatus;
+  return (
+    <article className="mcp-server-card">
+      <div className="mcp-server-card-header">
+        <strong><Plug size={15} /> {server.name}</strong>
+        <span>{authLabel}</span>
+      </div>
+      <p>{server.tools.length} tools{server.resources || server.resourceTemplates ? `, ${server.resources + server.resourceTemplates} resources` : ""}</p>
+      {server.tools.length > 0 && (
+        <div className="mcp-tool-list">
+          {server.tools.map((tool) => <code key={tool}>{tool}</code>)}
+        </div>
+      )}
+    </article>
   );
 }
 

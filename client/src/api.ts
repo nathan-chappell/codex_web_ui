@@ -1,4 +1,4 @@
-import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, McpServerList, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
 
 const AUTH_TOKEN_STORAGE_KEY = "codex-web-ui-auth-token-v1";
 export const AUTH_UNAUTHORIZED_EVENT = "codex-web-ui-auth-unauthorized";
@@ -42,6 +42,28 @@ export async function rpc<T = unknown>(method: string, params: JsonValue = {}): 
 export async function getClientRequests(): Promise<ClientRequest[]> {
   const body = await getJson<{ requests: ClientRequest[] }>("/api/client-requests");
   return body.requests;
+}
+
+export async function getMcpServers(): Promise<McpServerList> {
+  const body = await getJson<{ mcp: McpServerList }>("/api/mcp/servers");
+  return body.mcp;
+}
+
+export async function saveMcpServer(input: { name: string; url: string; bearerToken?: string }): Promise<McpServerList> {
+  const payload: { name: string; url: string; bearerToken?: string } = {
+    name: input.name,
+    url: input.url
+  };
+  if (input.bearerToken?.trim()) {
+    payload.bearerToken = input.bearerToken.trim();
+  }
+  const body = await postJson<{ mcp: McpServerList }>("/api/mcp/servers", payload);
+  return body.mcp;
+}
+
+export async function reloadMcpServers(): Promise<McpServerList> {
+  const body = await postJson<{ mcp: McpServerList }>("/api/mcp/servers/reload", {});
+  return body.mcp;
 }
 
 export async function respondClientRequest(id: string | number, result: JsonValue): Promise<void> {

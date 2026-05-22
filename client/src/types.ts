@@ -194,6 +194,20 @@ export interface RepositoryBrowser {
   entries: RepositoryEntry[];
 }
 
+export interface McpServerStatus {
+  name: string;
+  authStatus: string;
+  tools: string[];
+  resources: number;
+  resourceTemplates: number;
+}
+
+export interface McpServerList {
+  configPath: string;
+  servers: McpServerStatus[];
+  nextCursor: string | null;
+}
+
 export interface UiSettings {
   cwd: string;
   model: string;

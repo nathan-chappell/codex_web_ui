@@ -6,6 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { authState, isAuthenticated, loginWithPassword } from "./auth";
 import { corsHeaders } from "./cors";
+import { codexConfigPath, saveMcpServerConfig } from "./mcpConfig";
 import { enforceRpcPermissions } from "./permissions";
 import { getRuntime, homeDir, projectRoot } from "./runtime";
 import type { JsonValue } from "./types";
@@ -134,6 +135,27 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     return json({ ok: true, result }, 200, cors);
   }
 
+  if (pathname === "/api/mcp/servers" && request.method === "GET") {
+    return json({ ok: true, mcp: await listMcpServers() }, 200, cors);
+  }
+
+  if (pathname === "/api/mcp/servers" && request.method === "POST") {
+    const body = await readJsonBody(request);
+    const bearerToken = Object.prototype.hasOwnProperty.call(body, "bearerToken")
+      ? (typeof body.bearerToken === "string" ? body.bearerToken : null)
+      : undefined;
+    await saveMcpServerConfig({
+      name: body.name as string,
+      url: body.url as string,
+      bearerToken
+    });
+    return json({ ok: true, mcp: await reloadMcpServers() }, 200, cors);
+  }
+
+  if (pathname === "/api/mcp/servers/reload" && request.method === "POST") {
+    return json({ ok: true, mcp: await reloadMcpServers() }, 200, cors);
+  }
+
   if (pathname === "/api/client-requests" && request.method === "GET") {
     return json({ ok: true, requests: bridge.pendingClientRequests() }, 200, cors);
   }
@@ -257,6 +279,35 @@ async function createRepository(parentPath: unknown, name: unknown): Promise<Rec
   await mkdir(repoPath, { recursive: false });
   await runGitInit(repoPath);
   return browseRepositories(repoPath);
+}
+
+async function reloadMcpServers(): Promise<Record<string, unknown>> {
+  const { bridge } = await getRuntime();
+  await bridge.request("config/mcpServer/reload", {});
+  return listMcpServers();
+}
+
+async function listMcpServers(): Promise<Record<string, unknown>> {
+  const { bridge } = await getRuntime();
+  const response = asRecord(await bridge.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly" }));
+  const data = Array.isArray(response.data) ? response.data.map(summarizeMcpServer) : [];
+  return {
+    configPath: codexConfigPath(),
+    servers: data,
+    nextCursor: typeof response.nextCursor === "string" ? response.nextCursor : null
+  };
+}
+
+function summarizeMcpServer(value: unknown): Record<string, unknown> {
+  const record = asRecord(value);
+  const tools = asRecord(record.tools);
+  return {
+    name: typeof record.name === "string" ? record.name : "unknown",
+    authStatus: typeof record.authStatus === "string" ? record.authStatus : "unsupported",
+    tools: Object.keys(tools).sort(),
+    resources: Array.isArray(record.resources) ? record.resources.length : 0,
+    resourceTemplates: Array.isArray(record.resourceTemplates) ? record.resourceTemplates.length : 0
+  };
 }
 
 async function saveUploadedFile(request: Request): Promise<Record<string, unknown>> {
@@ -615,6 +666,10 @@ async function readBinaryBody(request: Request, limitBytes: number): Promise<Buf
     throw new Error("Request body is too large");
   }
   return body;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function json(payload: unknown, status = 200, cors?: Headers): Response {
