@@ -26,7 +26,7 @@ import {
   X
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -2916,6 +2916,17 @@ const Composer = memo(function Composer({
     await submitDraft(action, text ?? undefined);
   }
 
+  async function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey) || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    if (collapsed || submittingAction) {
+      return;
+    }
+    await submitOrChooseActiveAction(readDraft());
+  }
+
   async function handleAttachmentFile(file: File | undefined) {
     if (!file) {
       return;
@@ -3003,7 +3014,13 @@ const Composer = memo(function Composer({
         </div>
       </div>
       <PromptInputBody className="composer-body">
-        <textarea ref={textareaRef} name="message" rows={5} placeholder="Send a new message or steer the active turn" />
+        <textarea
+          ref={textareaRef}
+          name="message"
+          rows={5}
+          placeholder="Send a new message or steer the active turn"
+          onKeyDown={(event) => void handleTextareaKeyDown(event)}
+        />
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <PromptInputFooter className="composer-bottom">
           <PromptInputTools className="composer-actions">
