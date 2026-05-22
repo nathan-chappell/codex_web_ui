@@ -2143,6 +2143,15 @@ textarea {
     display: grid;
   }
 
+  .sessions-panel .panel-heading > div:first-child,
+  .sessions-panel .session-tools .field > span {
+    display: none;
+  }
+
+  .sessions-panel .panel-heading {
+    justify-content: flex-end;
+  }
+
   .mobile-pane-thread .thread-workspace {
     display: grid;
   }
