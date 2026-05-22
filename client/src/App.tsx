@@ -1466,19 +1466,12 @@ export default function App({ initialThreadId = null }: AppProps) {
       scheduleThreadRefresh(threadId, 800);
     }
     if (method === "turn/completed" && threadId) {
-      setActiveTurns((current) => {
-        const next = { ...current };
-        delete next[threadId];
-        return next;
-      });
+      clearActiveTurn(threadId);
       scheduleThreadRefresh(threadId, 600);
       scheduleListRefresh(1200);
     }
     if (method === "thread/status/changed" && threadId) {
-      const status = params.status;
-      setSessions((current) => current.map((thread) => (thread.id === threadId ? { ...thread, status: status as Thread["status"] } : thread)));
-      setOpenThreads((current) => (current[threadId] ? { ...current, [threadId]: { ...current[threadId], status: status as Thread["status"] } } : current));
-      setSelectedThread((current) => (current?.id === threadId ? { ...current, status: status as Thread["status"] } : current));
+      applyThreadStatus(threadId, params.status as Thread["status"]);
     }
     if (method === "account/rateLimits/updated") {
       const nextRateLimits = parseRateLimitsUpdate(params);
@@ -1519,7 +1512,15 @@ export default function App({ initialThreadId = null }: AppProps) {
       const item = asRecord(params.item);
       const turnId = typeof params.turnId === "string" ? params.turnId : null;
       if (turnId && typeof item.id === "string" && typeof item.type === "string") {
-        applyCompletedItem(threadId, turnId, item as unknown as ThreadItem);
+        const completedItem = item as unknown as ThreadItem;
+        applyCompletedItem(threadId, turnId, completedItem);
+        if (isFinalAnswerItem(completedItem)) {
+          clearActiveTurn(threadId, turnId);
+          applyThreadStatus(threadId, "idle");
+          scheduleThreadRefresh(threadId, 350);
+          scheduleListRefresh(700);
+          return;
+        }
       }
     }
     if (threadId && openThreadIdsRef.current.includes(threadId) && method.startsWith("item/")) {
@@ -1552,6 +1553,26 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   function applyCompletedItem(threadId: string, turnId: string, item: ThreadItem) {
     patchOpenThread(threadId, (thread) => patchThreadItem(thread, turnId, item.id, () => item));
+  }
+
+  function clearActiveTurn(threadId: string, turnId?: string | null) {
+    setActiveTurns((current) => {
+      if (!(threadId in current)) {
+        return current;
+      }
+      if (turnId && current[threadId] !== turnId) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[threadId];
+      return next;
+    });
+  }
+
+  function applyThreadStatus(threadId: string, status: Thread["status"]) {
+    setSessions((current) => current.map((thread) => (thread.id === threadId ? { ...thread, status } : thread)));
+    setOpenThreads((current) => (current[threadId] ? { ...current, [threadId]: { ...current[threadId], status } } : current));
+    setSelectedThread((current) => (current?.id === threadId ? { ...current, status } : current));
   }
 
   function applyStartedItem(threadId: string, turnId: string, item: ThreadItem) {
@@ -3545,8 +3566,20 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 }
 
 function activeTurnFromThread(thread: Thread): string | null {
-  const active = [...(thread.turns ?? [])].reverse().find((turn) => turn.status === "inProgress");
+  const active = [...(thread.turns ?? [])].reverse().find((turn) => isActiveTurnStatus(turn.status));
   return active?.id ?? null;
+}
+
+function isActiveTurnStatus(status: unknown): boolean {
+  const value = String(status ?? "").toLowerCase().replace(/[_\s-]+/g, "");
+  return value === "inprogress" || value === "active" || value === "running";
+}
+
+function isFinalAnswerItem(item: ThreadItem): boolean {
+  const record = asRecord(item);
+  const type = String(record.type ?? "").toLowerCase();
+  const phase = String(record.phase ?? record.kind ?? record.category ?? "").toLowerCase().replace(/[_\s-]+/g, "");
+  return type === "agentmessage" && (phase === "finalanswer" || phase === "final");
 }
 
 function userInputText(value: unknown): string {
