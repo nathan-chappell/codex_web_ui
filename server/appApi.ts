@@ -173,6 +173,12 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     return json({ ok: true, status: bridge.summary() }, 200, cors);
   }
 
+  if (pathname === "/api/app-server/recover" && request.method === "POST") {
+    const output = await recoverAppServerSidecar();
+    await bridge.restart();
+    return json({ ok: true, output, status: bridge.summary() }, 200, cors);
+  }
+
   if (pathname === "/api/server/stop" && request.method === "POST") {
     await bridge.stop();
     return json({ ok: true, status: bridge.summary() }, 200, cors);
@@ -619,6 +625,25 @@ function json(payload: unknown, status = 200, cors?: Headers): Response {
     }),
     cors
   );
+}
+
+async function recoverAppServerSidecar(): Promise<string> {
+  const socket = process.env.CODEX_APP_SERVER_SOCKET;
+  if (!socket) {
+    throw new Error("CODEX_APP_SERVER_SOCKET is not configured; this server owns its app-server connection.");
+  }
+  const binPath = path.join(projectRoot, "bin", "codex-web-ui.js");
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, [binPath, "app-server", "recover", "--socket", socket], { cwd: projectRoot, env: process.env, timeout: 12_000 }, (error, stdout, stderr) => {
+      const output = [stdout, stderr].filter(Boolean).join("\n").trim();
+      if (error) {
+        const message = output || error.message;
+        reject(new Error(message));
+        return;
+      }
+      resolve(output);
+    });
+  });
 }
 
 function noStoreHeaders(): Headers {

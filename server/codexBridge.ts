@@ -99,6 +99,19 @@ export class CodexBridge {
   }
 
   async request(method: string, params: JsonValue = {}, options: { skipStart?: boolean; timeoutMs?: number } = {}): Promise<JsonValue | undefined> {
+    try {
+      return await this.requestOnce(method, params, options);
+    } catch (error) {
+      if (options.skipStart || !isRecoverableConnectionError(error)) {
+        throw error;
+      }
+      this.connection = null;
+      await delay(350);
+      return this.requestOnce(method, params, options);
+    }
+  }
+
+  private async requestOnce(method: string, params: JsonValue = {}, options: { skipStart?: boolean; timeoutMs?: number } = {}): Promise<JsonValue | undefined> {
     if (!options.skipStart) {
       await this.start();
     }
@@ -161,22 +174,29 @@ export class CodexBridge {
       error: null
     });
 
-    const connection = this.config.appServerSocketPath
-      ? await this.connectUnixSocketAppServer()
-      : this.spawnOwnedAppServer();
-    this.connection = connection;
-    this.setStatus({ state: "starting", pid: connection.pid });
+    try {
+      const connection = this.config.appServerSocketPath
+        ? await this.connectUnixSocketAppServer()
+        : this.spawnOwnedAppServer();
+      this.connection = connection;
+      this.setStatus({ state: "starting", pid: connection.pid });
 
-    await this.request(
-      "initialize",
-      {
-        clientInfo: { name: "codex-web-ui", version: "0.1.0" },
-        capabilities: { experimentalApi: true }
-      },
-      { skipStart: true, timeoutMs: 30_000 }
-    );
-    this.notify("initialized");
-    this.setStatus({ state: "running" });
+      await this.request(
+        "initialize",
+        {
+          clientInfo: { name: "codex-web-ui", version: "0.1.0" },
+          capabilities: { experimentalApi: true }
+        },
+        { skipStart: true, timeoutMs: 30_000 }
+      );
+      this.notify("initialized");
+      this.setStatus({ state: "running" });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.connection = null;
+      this.setStatus({ state: "error", pid: null, error: err.message });
+      throw err;
+    }
   }
 
   private spawnOwnedAppServer(): AppServerConnection {
@@ -334,8 +354,13 @@ export class CodexBridge {
   }
 
   private handleConnectionError(error: Error): void {
+    this.connection = null;
     this.setStatus({ state: "error", error: error.message });
     this.rejectPending(error);
+    for (const request of this.clientRequests.values()) {
+      this.hub.broadcast("client-request-resolved", { id: request.id, method: request.method, error: error.message });
+    }
+    this.clientRequests.clear();
   }
 
   private handleConnectionExit(error: string | null, code: number | null, signal: NodeJS.Signals | null): void {
@@ -354,6 +379,15 @@ export class CodexBridge {
     }
     this.clientRequests.clear();
   }
+}
+
+function isRecoverableConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(ENOENT|ECONNREFUSED|EPIPE|socket closed|connection is unavailable|app-server is not running)\b/i.test(message);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 class UnixWebSocketConnection implements AppServerConnection {

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   Archive,
   ChevronUp,
   ChevronsDown,
@@ -28,6 +29,18 @@ import remarkGfm from "remark-gfm";
 import {
   CodeBlock
 } from "@/components/ai-elements/code-block";
+import {
+  Context,
+  ContextCacheUsage,
+  ContextContent,
+  ContextContentBody,
+  ContextContentFooter,
+  ContextContentHeader,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextReasoningUsage,
+  ContextTrigger
+} from "@/components/ai-elements/context";
 import {
   Confirmation,
   ConfirmationAction,
@@ -59,6 +72,7 @@ import {
   logout,
   openEventStream,
   readReferencedFile,
+  recoverAppServer,
   respondClientRequest,
   restartServer,
   rpc,
@@ -66,7 +80,7 @@ import {
 } from "./api";
 import type { AuthEventStream } from "./api";
 import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
-import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, ThreadTokenUsage, TokenUsageBreakdown, Turn, UiSettings } from "./types";
 
 const defaultSettings: UiSettings = {
   cwd: "",
@@ -257,7 +271,6 @@ export default function App({ initialThreadId = null }: AppProps) {
   );
   const activeThreadId = paneThreadIds[activePaneIndex] ?? null;
   const activeThread = activeThreadId ? openThreads[activeThreadId] ?? selectedThread : null;
-  const topbarContext = topbarContextText(serverStatus, activeThreadId, activeThread);
   const selectionActive = selectedSessionIds.size > 0;
   const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
   const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
@@ -337,13 +350,14 @@ export default function App({ initialThreadId = null }: AppProps) {
           <div className="mark">CX</div>
           <div>
             <strong>Codex Web UI</strong>
-            <span>{topbarContext}</span>
             {authInfo?.warning && <span className="auth-warning-text">{authInfo.warning}</span>}
           </div>
         </div>
         <div className="top-actions">
           <button className="status-button" type="button" onClick={() => setStatusOpen(true)} title="Show app server status">
-            <UsageStatusSummary rateLimits={rateLimits} compact />
+            <Activity size={16} />
+            <span>Status</span>
+            <StatusBadge value={serverStatus.state} />
           </button>
           <button className="ghost-button" type="button" onClick={() => void openFileExplorer()} title="Browse files">
             <Folder size={16} /> Files
@@ -562,7 +576,6 @@ export default function App({ initialThreadId = null }: AppProps) {
                   onSendMessage={handleSendPaneMessage}
                   paneIndex={paneIndex}
                   paneCount={threadPaneCount}
-                  rateLimits={rateLimits}
                   thread={thread}
                 />
               );
@@ -592,9 +605,11 @@ export default function App({ initialThreadId = null }: AppProps) {
       )}
       {statusOpen && (
         <StatusModal
+          activeThread={activeThread}
           rateLimits={rateLimits}
           status={serverStatus}
           onClose={() => setStatusOpen(false)}
+          onRecover={recoverAppServerFromUi}
           onRefresh={refreshStatus}
         />
       )}
@@ -671,6 +686,17 @@ export default function App({ initialThreadId = null }: AppProps) {
     try {
       setServerStatus(await restartServer());
       showToast("App server reconnected");
+      await loadSessions();
+    } catch (error) {
+      showToast(error);
+    }
+  }
+
+  async function recoverAppServerFromUi() {
+    try {
+      const result = await recoverAppServer();
+      setServerStatus(result.status);
+      showToast(result.output || "App server recovered");
       await loadSessions();
     } catch (error) {
       showToast(error);
@@ -1537,7 +1563,6 @@ const ThreadPane = memo(function ThreadPane({
   onSendMessage,
   paneIndex,
   paneCount,
-  rateLimits,
   thread
 }: {
   activeTurnId: string | null;
@@ -1557,7 +1582,6 @@ const ThreadPane = memo(function ThreadPane({
   onSendMessage: (thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => Promise<boolean>;
   paneIndex: number;
   paneCount: ThreadPaneCount;
-  rateLimits: RateLimitSnapshot | null;
   thread: Thread | null;
 }) {
   const [topHidden, setTopHidden] = useState(() => isMobileViewport());
@@ -1714,7 +1738,6 @@ const ThreadPane = memo(function ThreadPane({
             <StatusBadge value={statusType(thread)} />
             <EditableThreadTitle thread={thread} onRename={(name) => onRenameThread(thread, name)} />
             <p>{thread.cwd || "cwd unavailable"} | {thread.id}</p>
-            <ThreadUsageStats rateLimits={rateLimits} />
           </div>
         ) : isLoading ? (
           <div className="thread-title-block empty">
@@ -1750,6 +1773,7 @@ const ThreadPane = memo(function ThreadPane({
             onArchive={() => onArchiveThread(thread, paneIndex)}
             archiveLabel={archiveLabel}
             collapsed={composerCollapsed}
+            contextUsage={threadTokenUsage(thread)}
             onError={onError}
             onCollapsedChange={handleComposerCollapsedChange}
           />
@@ -1853,16 +1877,21 @@ function ApprovalRequestCard({
 }
 
 function StatusModal({
+  activeThread,
   rateLimits,
   status,
   onClose,
+  onRecover,
   onRefresh
 }: {
+  activeThread: Thread | null;
   rateLimits: RateLimitSnapshot | null;
   status: ServerStatus;
   onClose: () => void;
+  onRecover: () => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
+  const socket = typeof status.config?.appServerSocketPath === "string" ? status.config.appServerSocketPath : "stdio / owned";
   return (
     <div className="modal-backdrop">
       <section className="modal status-modal" role="dialog" aria-modal="true" aria-labelledby="status-title">
@@ -1876,12 +1905,20 @@ function StatusModal({
           </button>
         </header>
         <div className="status-grid">
+          <StatusDetail label="App server" value={<StatusBadge value={status.state} />} />
+          <StatusDetail label="Socket" value={socket} />
+          <StatusDetail label="Codex cwd" value={status.cwd || "Unavailable"} />
+          <StatusDetail label="Active thread" value={activeThread ? `${titleForThread(activeThread)} (${shortId(activeThread.id)})` : "None"} />
           <StatusDetail label="5hr remaining" value={<QuotaMetric value={rateLimitRemainingPercent(rateLimits, "5hr")} />} />
           <StatusDetail label="Weekly remaining" value={<QuotaMetric value={rateLimitRemainingPercent(rateLimits, "weekly")} />} />
         </div>
-        <p className="muted">Rate limits use the app-server account quota snapshot.</p>
+        {status.error && <p className="error-text">{status.error}</p>}
+        <p className="muted">Rate limits use the app-server account quota snapshot. Recover checks the sidecar PID and socket, then reconnects this UI.</p>
         <footer className="modal-actions">
           <button className="ghost-button" type="button" onClick={onClose}>Close</button>
+          <button className="secondary-button" type="button" onClick={() => void onRecover()}>
+            <RefreshCw size={16} /> Recover app-server
+          </button>
           <button className="primary-button" type="button" onClick={() => void onRefresh()}>
             <RefreshCw size={16} /> Refresh
           </button>
@@ -1896,15 +1933,6 @@ function StatusDetail({ label, value }: { label: string; value: ReactNode }) {
     <div className="status-detail">
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function UsageStatusSummary({ compact = false, rateLimits }: { compact?: boolean; rateLimits: RateLimitSnapshot | null }) {
-  return (
-    <div className={`usage-status-summary ${compact ? "compact" : ""}`}>
-      <span>5hr left {formatPercentValue(rateLimitRemainingPercent(rateLimits, "5hr"))}</span>
-      <span>wk left {formatPercentValue(rateLimitRemainingPercent(rateLimits, "weekly"))}</span>
     </div>
   );
 }
@@ -2616,23 +2644,6 @@ const StatusBadge = memo(function StatusBadge({ value }: { value: string | undef
   return <span className={`status-badge ${statusClass(text)}`}>{statusLabel(text)}</span>;
 });
 
-const ThreadUsageStats = memo(function ThreadUsageStats({ rateLimits }: { rateLimits: RateLimitSnapshot | null }) {
-  if (!rateLimits) {
-    return null;
-  }
-  return (
-    <div
-      className="thread-usage-stats"
-      title={[
-        `5hr remaining ${formatPercentValue(rateLimitRemainingPercent(rateLimits, "5hr"))}`,
-        `Weekly remaining ${formatPercentValue(rateLimitRemainingPercent(rateLimits, "weekly"))}`
-      ].join(" | ")}
-    >
-      <UsageStatusSummary rateLimits={rateLimits} compact />
-    </div>
-  );
-});
-
 function statusType(thread: Thread | null): string {
   if (!thread?.status) {
     return "unknown";
@@ -2644,6 +2655,7 @@ const Composer = memo(function Composer({
   activeTurnId,
   archiveLabel,
   collapsed,
+  contextUsage,
   deliveryKey,
   deliveryVersion,
   onArchive,
@@ -2657,6 +2669,7 @@ const Composer = memo(function Composer({
   activeTurnId: string | null;
   archiveLabel: string;
   collapsed: boolean;
+  contextUsage: ThreadTokenUsage | null;
   deliveryKey: string;
   deliveryVersion: number;
   onArchive: () => void;
@@ -2783,7 +2796,10 @@ const Composer = memo(function Composer({
         <textarea ref={textareaRef} name="message" rows={5} placeholder="Send a new message or steer the active turn" />
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <PromptInputFooter className="composer-bottom">
-          <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
+          <div className="composer-footer-meta">
+            <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
+            <ContextUsageBadge usage={contextUsage} />
+          </div>
           <PromptInputTools className="composer-actions">
             <input
               className="file-input"
@@ -2842,6 +2858,27 @@ function ComposerInputStatus({
       <span className="status-dot" />
       <span>{notice.action === "steer" ? "Steer sent" : notice.queued ? "Input enqueued" : "Input sent"}</span>
     </div>
+  );
+}
+
+function ContextUsageBadge({ usage }: { usage: ThreadTokenUsage | null }) {
+  const total = usage?.total ?? null;
+  return (
+    <Context maxTokens={usage?.modelContextWindow ?? null} usedTokens={total?.totalTokens ?? null} usage={total}>
+      <ContextTrigger className="context-trigger" />
+      <ContextContent>
+        <ContextContentHeader />
+        <ContextContentBody>
+          <ContextInputUsage />
+          <ContextOutputUsage />
+          <ContextReasoningUsage />
+          <ContextCacheUsage />
+        </ContextContentBody>
+        <ContextContentFooter>
+          Last turn: {formatTokenCount(usage?.last.totalTokens ?? null)}
+        </ContextContentFooter>
+      </ContextContent>
+    </Context>
   );
 }
 
@@ -2951,19 +2988,6 @@ function projectNameForThread(thread: Thread): string {
     return parts.at(-1) || thread.cwd;
   }
   return titleForThread(thread);
-}
-
-function topbarContextText(serverStatus: ServerStatus, activeThreadId: string | null, activeThread: Thread | null): string {
-  if (serverStatus.error) {
-    return serverStatus.error;
-  }
-  if (activeThread) {
-    return activeThread.cwd ? `Thread in ${activeThread.cwd}` : `Thread ${shortId(activeThread.id)}`;
-  }
-  if (activeThreadId) {
-    return `Loading thread ${shortId(activeThreadId)}`;
-  }
-  return `App server in ${serverStatus.cwd ?? ""}`;
 }
 
 function mostRecentThreadsByFolder(threads: Thread[]): Thread[] {
@@ -3336,6 +3360,119 @@ function parseRateLimitWindow(value: unknown) {
   };
 }
 
+function threadTokenUsage(thread: Thread | null): ThreadTokenUsage | null {
+  if (!thread) {
+    return null;
+  }
+  const record = asRecord(thread);
+  const direct = parseThreadTokenUsage(record.tokenUsage ?? record.token_usage ?? record.usage);
+  if (direct) {
+    return direct;
+  }
+
+  const breakdowns: TokenUsageBreakdown[] = [];
+  for (const turn of thread.turns ?? []) {
+    const turnRecord = asRecord(turn);
+    const turnUsage = parseTokenUsageBreakdown(turnRecord.tokenUsage ?? turnRecord.token_usage ?? turnRecord.usage);
+    if (turnUsage) {
+      breakdowns.push(turnUsage);
+    }
+    for (const item of turn.items ?? []) {
+      const itemRecord = asRecord(item);
+      const itemUsage = parseTokenUsageBreakdown(itemRecord.tokenUsage ?? itemRecord.token_usage ?? itemRecord.usage);
+      if (itemUsage) {
+        breakdowns.push(itemUsage);
+      }
+    }
+  }
+  const total = sumTokenBreakdowns(breakdowns);
+  const modelContextWindow = numberFromKeys(record, ["modelContextWindow", "model_context_window", "contextWindow", "context_window", "maxTokens", "max_tokens"]);
+  if (!total && modelContextWindow === null) {
+    return null;
+  }
+  return {
+    total: total ?? emptyTokenBreakdown(),
+    last: breakdowns.at(-1) ?? emptyTokenBreakdown(),
+    modelContextWindow
+  };
+}
+
+function parseThreadTokenUsage(value: unknown): ThreadTokenUsage | null {
+  const record = asRecord(value);
+  const total = parseTokenUsageBreakdown(record.total) ?? parseTokenUsageBreakdown(value);
+  const last = parseTokenUsageBreakdown(record.last) ?? total;
+  const modelContextWindow = numberFromKeys(record, ["modelContextWindow", "model_context_window", "contextWindow", "context_window", "maxTokens", "max_tokens"]);
+  return total || modelContextWindow !== null
+    ? {
+        total: total ?? emptyTokenBreakdown(),
+        last: last ?? emptyTokenBreakdown(),
+        modelContextWindow
+      }
+    : null;
+}
+
+function parseTokenUsageBreakdown(value: unknown): TokenUsageBreakdown | null {
+  const record = asRecord(value);
+  const promptDetails = asRecord(record.prompt_tokens_details ?? record.promptTokensDetails ?? record.inputTokensDetails ?? record.input_tokens_details);
+  const completionDetails = asRecord(record.completion_tokens_details ?? record.completionTokensDetails ?? record.outputTokensDetails ?? record.output_tokens_details);
+  const inputTokens = numberFromKeys(record, ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens", "input"]);
+  const cachedInputTokens = numberFromKeys(record, ["cachedInputTokens", "cached_input_tokens", "cachedTokens", "cached_tokens", "cached"]) ?? numberFromKeys(promptDetails, ["cachedTokens", "cached_tokens"]);
+  const outputTokens = numberFromKeys(record, ["outputTokens", "output_tokens", "completionTokens", "completion_tokens", "output"]);
+  const reasoningOutputTokens = numberFromKeys(record, ["reasoningOutputTokens", "reasoning_output_tokens", "reasoningTokens", "reasoning_tokens", "reasoning"]) ?? numberFromKeys(completionDetails, ["reasoningTokens", "reasoning_tokens"]);
+  const totalTokens = numberFromKeys(record, ["totalTokens", "total_tokens", "total"]) ?? sumNumbers(inputTokens, outputTokens);
+  if ([totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens].every((item) => item === null)) {
+    return null;
+  }
+  return {
+    totalTokens: totalTokens ?? 0,
+    inputTokens: inputTokens ?? 0,
+    cachedInputTokens: cachedInputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    reasoningOutputTokens: reasoningOutputTokens ?? 0
+  };
+}
+
+function sumTokenBreakdowns(items: TokenUsageBreakdown[]): TokenUsageBreakdown | null {
+  if (!items.length) {
+    return null;
+  }
+  return items.reduce(
+    (sum, item) => ({
+      totalTokens: sum.totalTokens + item.totalTokens,
+      inputTokens: sum.inputTokens + item.inputTokens,
+      cachedInputTokens: sum.cachedInputTokens + item.cachedInputTokens,
+      outputTokens: sum.outputTokens + item.outputTokens,
+      reasoningOutputTokens: sum.reasoningOutputTokens + item.reasoningOutputTokens
+    }),
+    emptyTokenBreakdown()
+  );
+}
+
+function emptyTokenBreakdown(): TokenUsageBreakdown {
+  return {
+    totalTokens: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0
+  };
+}
+
+function numberFromKeys(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numberValue(record[key]);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function sumNumbers(...values: (number | null)[]): number | null {
+  const usable = values.filter((value): value is number => value !== null);
+  return usable.length ? usable.reduce((sum, value) => sum + value, 0) : null;
+}
+
 function rateLimitRemainingPercent(rateLimits: RateLimitSnapshot | null, target: "5hr" | "weekly"): number | null {
   if (!rateLimits) {
     return null;
@@ -3362,6 +3499,13 @@ function isJsonValue(value: unknown): value is JsonValue {
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatTokenCount(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "n/a";
+  }
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: value >= 1000 ? 1 : 0, notation: "compact" }).format(value);
 }
 
 function threadIdFromThread(value: unknown): string {

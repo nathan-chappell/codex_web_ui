@@ -32,6 +32,7 @@
     "app-server:start": "node ./bin/codex-web-ui.js app-server start",
     "app-server:stop": "node ./bin/codex-web-ui.js app-server stop",
     "app-server:restart": "node ./bin/codex-web-ui.js app-server restart",
+    "app-server:recover": "node ./bin/codex-web-ui.js app-server recover",
     "app-server:status": "node ./bin/codex-web-ui.js app-server status",
     "check": "tsc --noEmit",
     "prepack": "npm run build"

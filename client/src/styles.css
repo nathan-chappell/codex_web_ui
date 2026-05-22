@@ -182,10 +182,17 @@ textarea {
 }
 
 .status-button {
-  background: transparent;
-  padding: 0;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #eef3f4;
+  color: var(--text);
+  padding: 7px 10px;
   display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  font-weight: 800;
   cursor: pointer;
 }
 
@@ -591,48 +598,6 @@ textarea {
 .thread-title-block p {
   grid-column: 2;
   margin: 0;
-}
-
-.thread-usage-stats {
-  grid-column: 2;
-  display: none;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.thread-usage-stats::-webkit-scrollbar {
-  display: none;
-}
-
-.thread-usage-stats span {
-  flex: 0 0 auto;
-}
-
-.usage-status-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.usage-status-summary span,
-.thread-usage-stats span {
-  min-height: 20px;
-  border: 1px solid #cbd8dc;
-  border-radius: 999px;
-  background: #eef3f4;
-  color: #3d4a50;
-  padding: 2px 7px;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.usage-status-summary.compact {
-  max-width: 100%;
 }
 
 .usage-metric {
@@ -1180,6 +1145,23 @@ textarea {
 .composer-bottom {
   justify-content: space-between;
   gap: 12px;
+}
+
+.composer-footer-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.context-trigger {
+  min-height: 28px;
+  border-color: #cbd8dc;
+  background: #eef3f4;
+  color: #3d4a50;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .composer-top {
@@ -2029,10 +2011,6 @@ textarea {
 
   .thread-title-block p {
     display: none;
-  }
-
-  .thread-usage-stats {
-    display: flex;
   }
 
   .conversation {

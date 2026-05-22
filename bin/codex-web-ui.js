@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,11 +186,11 @@ async function runAppServerCommand(options) {
     printAppServerHelp();
     return;
   }
-  if (!["start", "stop", "restart", "status"].includes(options.action)) {
+  if (!["start", "stop", "restart", "recover", "status"].includes(options.action)) {
     fail(`Unknown app-server command: ${options.action}`);
   }
   if (options.action === "start") {
-    startAppServer(options);
+    await startAppServer(options);
     return;
   }
   if (options.action === "stop") {
@@ -198,18 +199,26 @@ async function runAppServerCommand(options) {
   }
   if (options.action === "restart") {
     await stopAppServer(options, { quiet: true });
-    startAppServer(options);
+    await startAppServer(options);
     return;
   }
-  printAppServerStatus(options);
+  if (options.action === "recover") {
+    await recoverAppServer(options);
+    return;
+  }
+  await printAppServerStatus(options);
 }
 
-function startAppServer(options) {
+async function startAppServer(options) {
   const existingPid = readPid(options.pidFile);
   if (existingPid && isPidRunning(existingPid)) {
-    console.log(`codex app-server already running: pid=${existingPid}`);
-    console.log(`socket: ${options.socket}`);
-    return;
+    if (await isSocketConnectable(options.socket, 750)) {
+      console.log(`codex app-server already running: pid=${existingPid}`);
+      console.log(`socket: ${options.socket} (connectable)`);
+      return;
+    }
+    console.warn(`codex app-server pid ${existingPid} is present, but the socket is not connectable; restarting`);
+    await stopAppServer(options, { quiet: true });
   }
   mkdirSync(dirname(options.socket), { recursive: true });
   mkdirSync(dirname(options.pidFile), { recursive: true });
@@ -230,8 +239,12 @@ function startAppServer(options) {
     fail("Failed to start codex app-server");
   }
   writeFileSync(options.pidFile, `${child.pid}\n`);
+  const ready = await waitForSocket(options.socket, 5_000);
+  if (!ready) {
+    fail(`Timed out waiting for codex app-server socket: ${options.socket}. Check ${options.logFile}`);
+  }
   console.log(`codex app-server started: pid=${child.pid}`);
-  console.log(`socket: ${options.socket}`);
+  console.log(`socket: ${options.socket} (connectable)`);
   console.log(`log: ${options.logFile}`);
 }
 
@@ -260,11 +273,32 @@ async function stopAppServer(options, { quiet = false } = {}) {
   }
 }
 
-function printAppServerStatus(options) {
+async function recoverAppServer(options) {
+  const pid = readPid(options.pidFile);
+  if (pid && isPidRunning(pid) && await isSocketConnectable(options.socket, 750)) {
+    console.log(`codex app-server healthy: pid=${pid}`);
+    console.log(`socket: ${options.socket} (connectable)`);
+    return;
+  }
+  await stopAppServer(options, { quiet: true });
+  await startAppServer(options);
+  console.log("codex app-server recovered");
+}
+
+async function printAppServerStatus(options) {
   const pid = readPid(options.pidFile);
   const running = Boolean(pid && isPidRunning(pid));
-  console.log(`codex app-server ${running ? "running" : "stopped"}${pid ? `: pid=${pid}` : ""}`);
-  console.log(`socket: ${options.socket}${existsSync(options.socket) ? " (present)" : " (missing)"}`);
+  const socketPresent = existsSync(options.socket);
+  const socketConnectable = socketPresent ? await isSocketConnectable(options.socket, 500) : false;
+  const state = running && socketConnectable
+    ? "running"
+    : running
+      ? "degraded"
+      : socketPresent
+        ? "stopped with stale socket"
+        : "stopped";
+  console.log(`codex app-server ${state}${pid ? `: pid=${pid}` : ""}`);
+  console.log(`socket: ${options.socket}${socketConnectable ? " (connectable)" : socketPresent ? " (present, not connectable)" : " (missing)"}`);
   console.log(`pid file: ${options.pidFile}`);
   console.log(`log: ${options.logFile}`);
 }
@@ -307,6 +341,46 @@ function waitForPidExit(pid, timeoutMs) {
         resolve();
       }
     }, 100);
+  });
+}
+
+function waitForSocket(socket, timeoutMs) {
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const tick = async () => {
+      if (await isSocketConnectable(socket, 250)) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+      setTimeout(tick, 100);
+    };
+    void tick();
+  });
+}
+
+function isSocketConnectable(socket, timeoutMs) {
+  if (!existsSync(socket)) {
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    const client = createConnection(socket);
+    const timer = setTimeout(() => {
+      client.destroy();
+      resolve(false);
+    }, timeoutMs);
+    client.once("connect", () => {
+      clearTimeout(timer);
+      client.end();
+      resolve(true);
+    });
+    client.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
   });
 }
 
@@ -523,7 +597,7 @@ the server locks that policy and browser requests cannot override it.
 }
 
 function printAppServerHelp() {
-  console.log(`Usage: codex-web-ui app-server <start|stop|restart|status> [options]
+  console.log(`Usage: codex-web-ui app-server <start|stop|restart|recover|status> [options]
 
 Manages a detached local codex app-server side process.
 
@@ -539,6 +613,7 @@ Options:
 Examples:
   codex-web-ui app-server start
   codex-web-ui app-server status
+  codex-web-ui app-server recover
   codex-web-ui app-server restart --socket ./tmp/codex-app-server.sock
 `);
 }
