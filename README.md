@@ -30,6 +30,7 @@ The npm package exposes a `codex-web-ui` command:
 codex-web-ui --help
 codex-web-ui --port 4545
 CODEX_WEB_UI_PASSWORD='change-me' codex-web-ui --host 0.0.0.0
+CODEX_WEB_UI_PASSWORD='change-me' codex-web-ui --host 0.0.0.0 --full-control
 codex-web-ui --app-server-socket "$PWD/tmp/codex-app-server.sock" --model gpt-5.5 --effort high
 codex-web-ui --config ./codex-webgui.json
 ```
@@ -66,8 +67,11 @@ codex-web-ui \
 Default permissions are intentionally conservative: `on-request` approval and
 `workspace-write` sandbox. `danger-full-access`, `on-failure`, and `never`
 require `--unsafe-permissions` or `CODEX_WEB_UI_UNSAFE_PERMISSIONS=1`.
-If `approvalPolicy` or `sandbox` is specified by CLI, environment, or config,
-the backend locks that policy and browser requests cannot override it.
+For the common trusted local-network case, `--full-control` is a shortcut for
+unsafe permissions plus the `danger-full-access` sandbox while keeping
+`on-request` approval by default. If `approvalPolicy`, `sandbox`, or
+`full-control` is specified by CLI, environment, or config, the backend locks
+that policy and browser requests cannot override it.
 Codex approval requests are surfaced in the UI approval tray and answered
 through the authenticated `/api/client-requests/respond` endpoint.
 
@@ -99,6 +103,16 @@ Example `codex-webgui.json`:
   "dataDir": "~/.codex-webgui/data",
   "uploadDir": "~/.codex-webgui/data/uploads",
   "allowedOrigins": "http://localhost:*,http://127.0.0.1:*"
+}
+```
+
+To opt into full local control from config, use either:
+
+```json
+{
+  "host": "0.0.0.0",
+  "password": "change-me",
+  "permissions": "full-control"
 }
 ```
 

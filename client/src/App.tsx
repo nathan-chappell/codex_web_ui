@@ -43,6 +43,7 @@ import {
   PromptInputTools
 } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
 import {
@@ -162,7 +163,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const activePaneIndexRef = useRef(activePaneIndex);
   const openThreadIdsRef = useRef<(string | null)[]>(openThreadIds);
   const restoredLayoutThreadsRef = useRef(false);
-  const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean } | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean; refreshEligible: boolean } | null>(null);
   const resizingSidebarRef = useRef(false);
   const layoutRef = useRef<HTMLElement | null>(null);
   const sidebarWidthRef = useRef(sidebarWidth);
@@ -367,7 +368,12 @@ export default function App({ initialThreadId = null }: AppProps) {
         onTouchStart={(event) => {
           const touch = event.touches[0];
           touchStartRef.current = touch
-            ? { x: touch.clientX, y: touch.clientY, paneSwipeBlocked: isWithinHorizontalScroller(event.target, event.currentTarget) }
+            ? {
+                x: touch.clientX,
+                y: touch.clientY,
+                paneSwipeBlocked: isWithinHorizontalScroller(event.target, event.currentTarget),
+                refreshEligible: isWithinScrollableAtTop(event.target, event.currentTarget)
+              }
             : null;
         }}
         onTouchEnd={(event) => {
@@ -382,6 +388,10 @@ export default function App({ initialThreadId = null }: AppProps) {
           }
           const deltaX = touch.clientX - start.x;
           const deltaY = touch.clientY - start.y;
+          if (start.refreshEligible && deltaY > 110 && Math.abs(deltaY) > Math.abs(deltaX) * 1.25) {
+            window.location.reload();
+            return;
+          }
           if (Math.abs(deltaX) < 70 || Math.abs(deltaX) < Math.abs(deltaY) * 1.3) {
             return;
           }
@@ -861,13 +871,13 @@ export default function App({ initialThreadId = null }: AppProps) {
   async function respondToClientRequest(request: ClientRequest, decision: ApprovalDecision) {
     const key = clientRequestKey(request.id);
     setRespondingClientRequestIds((current) => new Set(current).add(key));
+    setClientRequests((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
     try {
       await respondClientRequest(request.id, { decision: approvalDecisionPayload(request, decision) });
-      setClientRequests((current) => {
-        const next = { ...current };
-        delete next[key];
-        return next;
-      });
     } catch (error) {
       showToast(error);
     } finally {
@@ -1338,9 +1348,45 @@ export default function App({ initialThreadId = null }: AppProps) {
         });
       }
     }
+    if (threadId && method === "item/agentMessage/delta") {
+      const turnId = typeof params.turnId === "string" ? params.turnId : null;
+      const itemId = typeof params.itemId === "string" ? params.itemId : null;
+      const delta = typeof params.delta === "string" ? params.delta : "";
+      if (turnId && itemId && delta) {
+        applyAgentMessageDelta(threadId, turnId, itemId, delta);
+      }
+    }
+    if (threadId && method === "item/completed") {
+      const item = asRecord(params.item);
+      const turnId = typeof params.turnId === "string" ? params.turnId : null;
+      if (turnId && typeof item.id === "string" && typeof item.type === "string") {
+        applyCompletedItem(threadId, turnId, item as unknown as ThreadItem);
+      }
+    }
     if (threadId && openThreadIdsRef.current.includes(threadId) && method.startsWith("item/")) {
       scheduleThreadRefresh(threadId, 800);
     }
+  }
+
+  function patchOpenThread(threadId: string, updater: (thread: Thread) => Thread) {
+    setOpenThreads((current) => {
+      const thread = current[threadId];
+      return thread ? { ...current, [threadId]: updater(thread) } : current;
+    });
+    setSelectedThread((current) => (current?.id === threadId ? updater(current) : current));
+  }
+
+  function applyAgentMessageDelta(threadId: string, turnId: string, itemId: string, delta: string) {
+    patchOpenThread(threadId, (thread) => patchThreadItem(thread, turnId, itemId, (item) => ({
+      ...item,
+      id: itemId,
+      type: "agentMessage",
+      text: `${typeof item.text === "string" ? item.text : ""}${delta}`
+    })));
+  }
+
+  function applyCompletedItem(threadId: string, turnId: string, item: ThreadItem) {
+    patchOpenThread(threadId, (thread) => patchThreadItem(thread, turnId, item.id, () => item));
   }
 
   function rememberActiveTurn(thread: Thread) {
@@ -1642,7 +1688,7 @@ const ThreadPane = memo(function ThreadPane({
         ) : isLoading ? (
           <div className="thread-title-block empty">
             <h2>Loading thread</h2>
-            <p>Fetching the selected thread.</p>
+            <Shimmer className="muted" duration={1.4}>Fetching the selected thread.</Shimmer>
           </div>
         ) : (
           <div className="thread-title-block empty">
@@ -1680,7 +1726,11 @@ const ThreadPane = memo(function ThreadPane({
       ) : (
         <div className="empty-state">
           <h2>{isLoading ? "Loading thread" : "Select a thread"}</h2>
-          <p>{isLoading ? "Fetching the selected thread." : "Choose an existing thread or start a new one."}</p>
+          {isLoading ? (
+            <Shimmer className="muted" duration={1.4}>Fetching the selected thread.</Shimmer>
+          ) : (
+            <p>Choose an existing thread or start a new one.</p>
+          )}
         </div>
       )}
     </section>
@@ -1743,9 +1793,11 @@ function ApprovalRequestCard({
         <code>{request.method}</code>
       </ConfirmationTitle>
       <ConfirmationRequest>
-        {reason && <p className="approval-reason">{reason}</p>}
-        {command && <pre className="approval-command">{command}</pre>}
-        {cwd && <p className="muted">{cwd}</p>}
+        <div className="approval-request">
+          {command && <pre className="approval-command">{command}</pre>}
+          {reason && <p className="approval-reason">{reason}</p>}
+          {cwd && <p className="approval-cwd muted" title={cwd}>{cwd}</p>}
+        </div>
       </ConfirmationRequest>
       <ConfirmationActions className="approval-actions">
         <ConfirmationAction className="primary-button" disabled={responding} onClick={() => void onRespond(request, "accept")}>
@@ -1918,6 +1970,47 @@ function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: T
     remaining -= visibleItems.length;
   }
   return selected;
+}
+
+function patchThreadItem(
+  thread: Thread,
+  turnId: string,
+  itemId: string,
+  updateItem: (item: ThreadItem) => ThreadItem
+): Thread {
+  const turns = thread.turns ?? [];
+  let foundTurn = false;
+  const nextTurns = turns.map((turn) => {
+    if (turn.id !== turnId) {
+      return turn;
+    }
+    foundTurn = true;
+    return patchTurnItem(turn, itemId, updateItem);
+  });
+  if (!foundTurn) {
+    nextTurns.push({
+      id: turnId,
+      status: "inProgress",
+      items: [updateItem({ id: itemId, type: "agentMessage" })]
+    });
+  }
+  return { ...thread, turns: nextTurns };
+}
+
+function patchTurnItem(turn: Turn, itemId: string, updateItem: (item: ThreadItem) => ThreadItem): Turn {
+  const items = turn.items ?? [];
+  let foundItem = false;
+  const nextItems = items.map((item) => {
+    if (item.id !== itemId) {
+      return item;
+    }
+    foundItem = true;
+    return updateItem(item);
+  });
+  if (!foundItem) {
+    nextItems.push(updateItem({ id: itemId, type: "agentMessage" }));
+  }
+  return { ...turn, items: nextItems };
 }
 
 const ThreadItemView = memo(function ThreadItemView({
@@ -2934,6 +3027,23 @@ function isWithinHorizontalScroller(target: EventTarget | null, stopAt: Element)
 function canScrollHorizontally(element: Element): boolean {
   const overflowX = window.getComputedStyle(element).overflowX;
   return ["auto", "scroll", "overlay"].includes(overflowX) && element.scrollWidth > element.clientWidth + 1;
+}
+
+function isWithinScrollableAtTop(target: EventTarget | null, stopAt: Element): boolean {
+  if (!(target instanceof Element)) {
+    return window.scrollY <= 1;
+  }
+  for (let element: Element | null = target; element && element !== stopAt; element = element.parentElement) {
+    if (canScrollVertically(element)) {
+      return element.scrollTop <= 1;
+    }
+  }
+  return window.scrollY <= 1;
+}
+
+function canScrollVertically(element: Element): boolean {
+  const overflowY = window.getComputedStyle(element).overflowY;
+  return ["auto", "scroll", "overlay"].includes(overflowY) && element.scrollHeight > element.clientHeight + 1;
 }
 
 function isMobileViewport(): boolean {

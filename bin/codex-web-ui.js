@@ -29,10 +29,18 @@ const port = String(pick("port", "PORT", "4545"));
 const dataDir = resolvePath(pick("dataDir", "CODEX_WEB_UI_DATA_DIR", join(userConfigDir, "data")));
 const uploadDir = resolvePath(pick("uploadDir", "CODEX_WEB_UI_UPLOAD_DIR", join(dataDir, "uploads")));
 const codexCwd = resolvePath(pick("cwd", "CODEX_CWD", launchCwd));
-const unsafePermissions = pickBoolean("unsafePermissions", "CODEX_WEB_UI_UNSAFE_PERMISSIONS", false);
+const requestedSandbox = pick("sandbox", "CODEX_WEB_UI_SANDBOX", "workspace-write");
+const fullControl = pickBoolean("fullControl", "CODEX_WEB_UI_FULL_CONTROL", false) || requestedSandbox === "full-control" || pick("permissionPreset", "CODEX_WEB_UI_PERMISSION_PRESET") === "full-control";
+const unsafePermissions = fullControl || pickBoolean("unsafePermissions", "CODEX_WEB_UI_UNSAFE_PERMISSIONS", false);
 const approvalPolicy = pick("approvalPolicy", "CODEX_WEB_UI_APPROVAL_POLICY", "on-request");
-const sandbox = pick("sandbox", "CODEX_WEB_UI_SANDBOX", "workspace-write");
-const permissionsSpecified = hasPermissionConfig(options) || hasPermissionConfig(config) || Boolean(env.CODEX_WEB_UI_APPROVAL_POLICY || env.CODEX_WEB_UI_SANDBOX || env.CODEX_WEB_UI_LOCK_PERMISSIONS);
+const sandbox = fullControl ? "danger-full-access" : requestedSandbox;
+const permissionsSpecified = hasPermissionConfig(options) || hasPermissionConfig(config) || Boolean(
+  env.CODEX_WEB_UI_APPROVAL_POLICY
+  || env.CODEX_WEB_UI_SANDBOX
+  || env.CODEX_WEB_UI_FULL_CONTROL
+  || env.CODEX_WEB_UI_PERMISSION_PRESET
+  || env.CODEX_WEB_UI_LOCK_PERMISSIONS
+);
 
 setEnv(env, "HOST", host);
 setEnv(env, "PORT", port);
@@ -96,6 +104,7 @@ function parseArgs(args) {
         cwd: { type: "string" },
         "data-dir": { type: "string" },
         effort: { type: "string" },
+        "full-control": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         host: { type: "string" },
         model: { type: "string" },
@@ -119,6 +128,7 @@ function parseArgs(args) {
       config: values.config,
       cwd: values.cwd,
       dataDir: values["data-dir"],
+      fullControl: values["full-control"],
       help: values.help,
       host: values.host,
       model: values.model,
@@ -223,6 +233,8 @@ function normalizeConfig(raw) {
     password: raw.password,
     port: raw.port,
     reasoningEffort: raw.reasoningEffort ?? raw["reasoning-effort"] ?? raw.effort,
+    fullControl: raw.fullControl ?? raw["full-control"],
+    permissionPreset: raw.permissionPreset ?? raw["permission-preset"] ?? raw.permissions,
     sandbox: raw.sandbox,
     unsafePermissions: raw.unsafePermissions ?? raw["unsafe-permissions"],
     uploadDir: raw.uploadDir ?? raw["upload-dir"]
@@ -243,6 +255,9 @@ function validatePermissionOptions({ approvalPolicy, sandbox, unsafePermissions 
   const unsafeSandboxes = new Set(["read-only", "workspace-write", "danger-full-access"]);
   const allowedApprovalPolicies = unsafePermissions ? unsafeApprovalPolicies : safeApprovalPolicies;
   const allowedSandboxes = unsafePermissions ? unsafeSandboxes : safeSandboxes;
+  if (sandbox === "full-control") {
+    fail("Use --full-control, or set sandbox to danger-full-access with --unsafe-permissions.");
+  }
   if (!allowedApprovalPolicies.has(approvalPolicy)) {
     fail(`Approval policy requires --unsafe-permissions: ${approvalPolicy}`);
   }
@@ -252,7 +267,7 @@ function validatePermissionOptions({ approvalPolicy, sandbox, unsafePermissions 
 }
 
 function hasPermissionConfig(value) {
-  return Boolean(value && (value.approvalPolicy !== undefined || value.sandbox !== undefined));
+  return Boolean(value && (value.approvalPolicy !== undefined || value.sandbox !== undefined || value.fullControl !== undefined || value.permissionPreset !== undefined));
 }
 
 function validateSafety({ host, password, allowPublicWithoutPassword }) {
@@ -316,6 +331,8 @@ Options:
                                 on-failure and never. Default: on-request
   --sandbox <mode>              read-only or workspace-write. Default:
                                 workspace-write
+  --full-control                Shortcut for --unsafe-permissions plus
+                                danger-full-access sandbox
   --unsafe-permissions          Allow danger-full-access sandbox and more
                                 permissive approval policies
   --data-dir <path>             Runtime data/log directory
@@ -333,8 +350,8 @@ Defaults:
   Permissions:                  on-request + workspace-write
 
 Precedence: CLI options > environment variables > config file > defaults.
-If approval-policy or sandbox is specified by CLI/env/config, the server locks
-that policy and browser requests cannot override it.
+If approval-policy, sandbox, or full-control is specified by CLI/env/config,
+the server locks that policy and browser requests cannot override it.
 `);
 }
 

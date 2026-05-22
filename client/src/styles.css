@@ -790,11 +790,18 @@ textarea {
 
 .approval-card {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
   background: #fff;
+  min-width: 0;
+}
+
+.approval-card > * {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .approval-card-heading {
@@ -812,11 +819,18 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.approval-request {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .approval-reason {
   margin: 0;
   color: var(--text);
   font-size: 13px;
   line-height: 1.4;
+  overflow-wrap: break-word;
 }
 
 .approval-command {
@@ -827,15 +841,28 @@ textarea {
   padding: 10px;
   max-height: 160px;
   overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.approval-cwd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.approval-actions button {
+  flex: 0 1 auto;
+  min-width: min(128px, 100%);
 }
 
 .item {
@@ -2097,6 +2124,16 @@ textarea {
     bottom: 10px;
     width: calc(100vw - 20px);
     max-height: min(62vh, 520px);
+  }
+
+  .approval-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    justify-content: stretch;
+  }
+
+  .approval-actions button {
+    width: 100%;
   }
 
   .item,

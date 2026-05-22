@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import type { BundledLanguage } from "shiki";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import { FileTree, FileTreeActions, FileTreeFile, FileTreeIcon, FileTreeName } from "@/components/ai-elements/file-tree";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import { downloadReferencedFile, fetchReferencedFileBlob } from "./api";
 import type { FileExplorer, FileExplorerEntry, FilePreview, FileReference } from "./types";
 
@@ -87,9 +88,9 @@ export function FileExplorerModal({
           </div>
         )}
         <div className={`file-explorer-list ${loading ? "loading" : ""}`}>
-          {loading && explorer && <div className="file-list-progress"><span className="spinner" /> Loading</div>}
+          {loading && explorer && <div className="file-list-progress"><Shimmer as="span" duration={1.4}>Loading files</Shimmer></div>}
           {!explorer ? (
-            <p className="muted empty-pad"><span className="spinner" /> Loading files</p>
+            <Shimmer className="muted empty-pad" duration={1.4}>Loading files</Shimmer>
           ) : visibleEntries.length === 0 ? (
             <p className="muted empty-pad">No files found.</p>
           ) : (
@@ -138,8 +139,7 @@ export function FileViewerLoadingModal({ reference, onClose }: { reference: File
           </button>
         </header>
         <div className="file-loading-body">
-          <span className="spinner large" />
-          <span>Loading preview</span>
+          <Shimmer as="span" duration={1.4}>Loading preview</Shimmer>
         </div>
       </section>
     </div>
@@ -244,7 +244,7 @@ function AuthenticatedMediaPreview({
     return <p className="error-text empty-pad">{error}</p>;
   }
   if (!objectUrl) {
-    return <p className="muted empty-pad"><span className="spinner" /> Loading preview</p>;
+    return <Shimmer className="muted empty-pad" duration={1.4}>Loading preview</Shimmer>;
   }
   if (type === "image") {
     return <img className={className} src={objectUrl} alt={file.name} />;
