@@ -11,6 +11,7 @@ import {
   FolderGit2,
   GitFork,
   Home,
+  LogOut,
   MessageSquarePlus,
   Minimize2,
   Paperclip,
@@ -23,7 +24,7 @@ import {
   X
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, memo, MouseEvent, PointerEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -169,6 +170,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [clientRequests, setClientRequests] = useState<Record<string, ClientRequest>>({});
   const [respondingClientRequestIds, setRespondingClientRequestIds] = useState<Set<string>>(new Set());
   const [threadPermissionOverrides, setThreadPermissionOverrides] = useState<Record<string, ThreadPermissionOverride>>(() => readStoredThreadPermissions());
+  const [pullRefresh, setPullRefresh] = useState<{ active: boolean; distance: number; refreshing: boolean }>({ active: false, distance: 0, refreshing: false });
 
   const eventSourceRef = useRef<AuthEventStream | null>(null);
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
@@ -184,6 +186,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const threadPermissionOverridesRef = useRef<Record<string, ThreadPermissionOverride>>(threadPermissionOverrides);
   const restoredLayoutThreadsRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean; refreshEligible: boolean } | null>(null);
+  const headerPullStartRef = useRef<{ x: number; y: number } | null>(null);
   const resizingSidebarRef = useRef(false);
   const layoutRef = useRef<HTMLElement | null>(null);
   const sidebarWidthRef = useRef(sidebarWidth);
@@ -281,7 +284,11 @@ export default function App({ initialThreadId = null }: AppProps) {
   );
   const activeThreadId = paneThreadIds[activePaneIndex] ?? null;
   const activeThread = activeThreadId ? openThreads[activeThreadId] ?? selectedThread : null;
-  const appTitle = mobilePane === "sessions" && isMobileViewport() ? "Codex Web UI" : activeThread ? titleForThread(activeThread) : "Codex Web UI";
+  const appTitle = isMobileViewport() && mobilePane === "sessions"
+    ? "Codex Web UI"
+    : activeThread
+      ? titleForThread(activeThread)
+      : "Codex Web UI";
   const selectionActive = selectedSessionIds.size > 0;
   const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
   const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
@@ -356,7 +363,13 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   return (
     <main className={`app-shell ${authInfo?.warning ? "auth-warning-mode" : ""}`}>
-      <header className="topbar">
+      <header
+        className="topbar"
+        onTouchStart={handleHeaderTouchStart}
+        onTouchMove={handleHeaderTouchMove}
+        onTouchEnd={() => void finishHeaderPullRefresh()}
+        onTouchCancel={cancelHeaderPullRefresh}
+      >
         <div className="brand-block">
           <div className="mark" aria-hidden="true">
             <img src="/icon.svg" alt="" />
@@ -367,19 +380,19 @@ export default function App({ initialThreadId = null }: AppProps) {
           </div>
         </div>
         <div className="top-actions">
-          <button className="status-button" type="button" onClick={() => setStatusOpen(true)} title="Show app server status">
+          <button className="status-button" type="button" onClick={() => setStatusOpen(true)} title="Show app server status" aria-label="Show app server status">
             <Activity size={16} />
-            <span>Status</span>
+            <span className="top-action-label">Status</span>
             <StatusBadge value={serverStatus.state} />
           </button>
-          <button className="ghost-button" type="button" onClick={() => void openFileExplorer()} title="Browse files">
-            <Folder size={16} /> Files
+          <button className="ghost-button" type="button" onClick={() => void openFileExplorer()} title="Browse files" aria-label="Browse files">
+            <Folder size={16} /> <span className="top-action-label">Files</span>
           </button>
-          <button className="ghost-button" type="button" onClick={handleRestart}>
-            <RefreshCw size={16} /> Reconnect
+          <button className="ghost-button" type="button" onClick={handleRestart} title="Reconnect" aria-label="Reconnect">
+            <RefreshCw size={16} /> <span className="top-action-label">Reconnect</span>
           </button>
-          <button className="ghost-button" type="button" onClick={() => void handleLogout()}>
-            Logout
+          <button className="ghost-button" type="button" onClick={() => void handleLogout()} title="Logout" aria-label="Logout">
+            <LogOut size={16} /> <span className="top-action-label">Logout</span>
           </button>
         </div>
       </header>
@@ -392,6 +405,14 @@ export default function App({ initialThreadId = null }: AppProps) {
           Thread
         </button>
       </nav>
+
+      <div
+        className={`pull-refresh-indicator ${pullRefresh.active || pullRefresh.refreshing ? "visible" : ""} ${pullRefresh.refreshing ? "refreshing" : ""}`}
+        style={{ "--pull-distance": `${Math.min(72, pullRefresh.distance)}px` } as CSSProperties}
+        aria-hidden="true"
+      >
+        <RefreshCw size={18} />
+      </div>
 
       <section
         ref={layoutRef}
@@ -727,6 +748,59 @@ export default function App({ initialThreadId = null }: AppProps) {
     }
   }
 
+  function handleHeaderTouchStart(event: TouchEvent<HTMLElement>) {
+    if (!isMobileViewport()) {
+      return;
+    }
+    const touch = event.touches[0];
+    headerPullStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+
+  function handleHeaderTouchMove(event: TouchEvent<HTMLElement>) {
+    const start = headerPullStartRef.current;
+    const touch = event.touches[0];
+    if (!start || !touch || pullRefresh.refreshing) {
+      return;
+    }
+    const deltaY = touch.clientY - start.y;
+    const deltaX = touch.clientX - start.x;
+    if (deltaY <= 4 || Math.abs(deltaX) > Math.max(32, deltaY * 0.8)) {
+      return;
+    }
+    event.preventDefault();
+    setPullRefresh({ active: true, distance: Math.min(96, deltaY * 0.72), refreshing: false });
+  }
+
+  async function finishHeaderPullRefresh() {
+    const shouldRefresh = pullRefresh.active && pullRefresh.distance >= 54;
+    headerPullStartRef.current = null;
+    if (!shouldRefresh) {
+      setPullRefresh({ active: false, distance: 0, refreshing: false });
+      return;
+    }
+    setPullRefresh({ active: true, distance: 64, refreshing: true });
+    try {
+      await refreshVisibleData();
+    } finally {
+      window.setTimeout(() => setPullRefresh({ active: false, distance: 0, refreshing: false }), 220);
+    }
+  }
+
+  function cancelHeaderPullRefresh() {
+    headerPullStartRef.current = null;
+    if (!pullRefresh.refreshing) {
+      setPullRefresh({ active: false, distance: 0, refreshing: false });
+    }
+  }
+
+  async function refreshVisibleData() {
+    await Promise.all([
+      refreshStatus(),
+      loadSessions(),
+      activeThreadId ? readThread(activeThreadId, activePaneIndexRef.current) : Promise.resolve(null)
+    ]);
+  }
+
   function defaultFileExplorerCwd(): string {
     return selectedThread?.cwd || settings.cwd || serverStatus.cwd || "";
   }
@@ -951,7 +1025,12 @@ export default function App({ initialThreadId = null }: AppProps) {
       [threadId]: { approvalPolicy: "never", sandbox: "danger-full-access" }
     }));
     showToast("Full-control permissions enabled for this thread.");
-    await respondToClientRequest(request, hasAvailableDecision(request, "acceptForSession") ? "acceptForSession" : "accept");
+    const pendingForThread = Object.values(clientRequests)
+      .filter((item) => clientRequestKey(item.id) === clientRequestKey(request.id) || threadIdFromClientRequest(item) === threadId)
+      .sort((a, b) => a.receivedAt - b.receivedAt);
+    for (const item of pendingForThread) {
+      await respondToClientRequest(item, hasAvailableDecision(item, "acceptForSession") ? "acceptForSession" : "accept");
+    }
   }
 
   function switchArchiveFilter(archived: boolean) {
