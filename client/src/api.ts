@@ -1,6 +1,7 @@
 import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
 
 const AUTH_TOKEN_STORAGE_KEY = "codex-web-ui-auth-token-v1";
+export const AUTH_UNAUTHORIZED_EVENT = "codex-web-ui-auth-unauthorized";
 
 export async function getAuth(): Promise<AuthState> {
   const body = await getJson<AuthState>("/api/auth");
@@ -166,6 +167,9 @@ async function parseResponse<T>(response: Response): Promise<T> {
 async function assertResponse(response: Response): Promise<void> {
   if (response.status === 401) {
     clearAuthToken();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+    }
   }
   if (response.ok) {
     return;

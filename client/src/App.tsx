@@ -64,6 +64,7 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
 import {
+  AUTH_UNAUTHORIZED_EVENT,
   browseFiles,
   browseRepositories,
   createRepository,
@@ -236,6 +237,17 @@ export default function App({ initialThreadId = null }: AppProps) {
   }, []);
 
   useEffect(() => {
+    function handleUnauthorized() {
+      eventSourceRef.current?.close();
+      setAuthInfo(null);
+      setAuthenticated(false);
+      setLoginError("Session expired. Sign in again.");
+    }
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+  }, []);
+
+  useEffect(() => {
     if (!authenticated) {
       return;
     }
@@ -249,7 +261,11 @@ export default function App({ initialThreadId = null }: AppProps) {
       (event) => {
         handleServerEvent(event);
       },
-      () => undefined
+      (events) => {
+        for (const event of events) {
+          handleServerEvent(event);
+        }
+      }
     );
     source.onerror = () => setServerStatus((current) => ({ ...current, state: "disconnected", error: "Event stream disconnected" }));
     eventSourceRef.current = source;
@@ -395,7 +411,7 @@ export default function App({ initialThreadId = null }: AppProps) {
           </div>
         </div>
         <div className="top-actions">
-          <button className="status-button" type="button" onClick={() => setStatusOpen(true)} title="Show app server status" aria-label="Show app server status">
+          <button className={`status-button ${serverStatus.state === "disconnected" ? "disconnected" : ""}`} type="button" onClick={() => setStatusOpen(true)} title="Show app server status" aria-label="Show app server status">
             <Activity size={16} />
             <span className="top-action-label">Status</span>
             <StatusBadge value={serverStatus.state} />
@@ -1493,6 +1509,12 @@ export default function App({ initialThreadId = null }: AppProps) {
       const nextRateLimits = parseRateLimitsUpdate(params);
       if (nextRateLimits) {
         setRateLimits(nextRateLimits);
+      }
+    }
+    if (threadId && method === "thread/tokenUsage/updated") {
+      const tokenUsage = parseThreadTokenUsage(params.tokenUsage ?? params.token_usage ?? params);
+      if (tokenUsage) {
+        patchOpenThread(threadId, (thread) => ({ ...thread, tokenUsage }));
       }
     }
     if (method === "serverRequest/resolved") {
@@ -3163,9 +3185,9 @@ function ComposerInputStatus({
 }
 
 function ContextUsageBadge({ usage }: { usage: ThreadTokenUsage | null }) {
-  const total = usage?.total ?? null;
+  const current = usage?.last ?? usage?.total ?? null;
   return (
-    <Context maxTokens={usage?.modelContextWindow ?? null} usedTokens={total?.totalTokens ?? null} usage={contextUsageForElement(total)}>
+    <Context maxTokens={usage?.modelContextWindow ?? null} usedTokens={current?.totalTokens ?? null} usage={contextUsageForElement(current)}>
       <ContextTrigger className="context-trigger" />
       <ContextContent>
         <ContextContentHeader />
@@ -3176,7 +3198,7 @@ function ContextUsageBadge({ usage }: { usage: ThreadTokenUsage | null }) {
           <ContextCacheUsage />
         </ContextContentBody>
         <ContextContentFooter>
-          Last turn: {formatTokenCount(usage?.last.totalTokens ?? null)}
+          Total used: {formatTokenCount(usage?.total.totalTokens ?? null)}
         </ContextContentFooter>
       </ContextContent>
     </Context>

@@ -1480,6 +1480,19 @@ textarea {
   border-color: #3d4a50;
 }
 
+.topbar .status-button.disconnected {
+  background: #f05b55;
+  color: #11191d;
+  border-color: #11191d;
+  box-shadow: inset 0 0 0 1px #11191d;
+}
+
+.topbar .status-button.disconnected .status-badge {
+  background: #f05b55;
+  color: #11191d;
+  border: 1px solid #11191d;
+}
+
 .danger-button {
   background: #f8e6e6;
   color: var(--red);
