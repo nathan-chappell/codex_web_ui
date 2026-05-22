@@ -1501,6 +1501,16 @@ textarea {
   width: min(760px, 100%);
 }
 
+.send-choice-modal {
+  width: min(420px, 100%);
+}
+
+.send-choice-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .file-viewer-modal {
   width: min(1100px, 100%);
   grid-template-rows: auto minmax(0, 1fr) auto;

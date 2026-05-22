@@ -3,9 +3,11 @@
 import {
   Activity,
   Archive,
+  AtSign,
   ChevronUp,
   ChevronsDown,
   ChevronsUp,
+  DollarSign,
   FileDiff,
   Folder,
   FolderGit2,
@@ -2050,7 +2052,6 @@ function StatusModal({
         {status.error && <p className="error-text">{status.error}</p>}
         <p className="muted">Rate limits use the app-server account quota snapshot. Recover checks the sidecar PID and socket, then reconnects this UI.</p>
         <footer className="modal-actions">
-          <button className="ghost-button" type="button" onClick={onClose}>Close</button>
           <button className="secondary-button" type="button" onClick={() => void onRecover()}>
             <RefreshCw size={16} /> Recover app-server
           </button>
@@ -2818,6 +2819,7 @@ const Composer = memo(function Composer({
   const [uploading, setUploading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
+  const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
@@ -2826,6 +2828,7 @@ const Composer = memo(function Composer({
     deliveryKeyRef.current = deliveryKey;
     setSubmissionNotice(null);
     setSubmittingAction(null);
+    setSendChoiceText(null);
   }, [deliveryKey]);
 
   useEffect(() => {
@@ -2863,6 +2866,20 @@ const Composer = memo(function Composer({
     }
   }
 
+  async function submitOrChooseActiveAction(text?: string) {
+    if (activeTurnId) {
+      setSendChoiceText(text ?? readDraft());
+      return;
+    }
+    await submitDraft("send", text);
+  }
+
+  async function submitSendChoice(action: ComposerAction) {
+    const text = sendChoiceText;
+    setSendChoiceText(null);
+    await submitDraft(action, text ?? undefined);
+  }
+
   async function handleAttachmentFile(file: File | undefined) {
     if (!file) {
       return;
@@ -2870,9 +2887,8 @@ const Composer = memo(function Composer({
     setUploading(true);
     try {
       const attachment = await uploadAttachment(file);
-      const current = readDraft();
       const reference = markdownFileReference(attachment.name, attachment.path);
-      setDraftValue(current.trim() ? `${current}\n${reference}` : reference);
+      insertDraftText(reference, { block: true });
     } catch (error) {
       onError(error);
     } finally {
@@ -2893,7 +2909,24 @@ const Composer = memo(function Composer({
     }
   }
 
+  function insertDraftText(value: string, options: { block?: boolean } = {}) {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    const before = textarea.value.slice(0, start);
+    const after = textarea.value.slice(end);
+    const prefix = options.block && before.trim() && !before.endsWith("\n") ? "\n" : before && !/[\s([{:]$/.test(before) ? " " : "";
+    const suffix = options.block && after.trim() && !after.startsWith("\n") ? "\n" : "";
+    const insertion = `${prefix}${value}${suffix}`;
+    textarea.setRangeText(insertion, start, end, "end");
+    textarea.focus();
+  }
+
   return (
+    <>
     <PromptInput
       className={`composer ${collapsed ? "collapsed" : ""}`}
       maxFiles={1}
@@ -2902,7 +2935,7 @@ const Composer = memo(function Composer({
         if (collapsed) {
           return;
         }
-        await submitDraft("send", message.text);
+        await submitOrChooseActiveAction(message.text);
       }}
     >
       <div className="composer-top">
@@ -2954,12 +2987,29 @@ const Composer = memo(function Composer({
             >
               <Paperclip size={17} />
             </PromptInputButton>
+            <PromptInputButton
+              className="icon-button"
+              type="button"
+              onClick={() => insertDraftText("@")}
+              disabled={Boolean(submittingAction)}
+              tooltip="Reference file"
+              aria-label="Reference file"
+            >
+              <AtSign size={17} />
+            </PromptInputButton>
+            <PromptInputButton
+              className="icon-button"
+              type="button"
+              onClick={() => insertDraftText("$")}
+              disabled={Boolean(submittingAction)}
+              tooltip="Reference skill"
+              aria-label="Reference skill"
+            >
+              <DollarSign size={17} />
+            </PromptInputButton>
             <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
             </button>
-            <PromptInputButton className="secondary-button" type="button" onClick={() => void submitDraft("steer")} disabled={!activeTurnId || Boolean(submittingAction)}>
-              <Send size={16} /> {submittingAction === "steer" ? "Steering" : "Steer"}
-            </PromptInputButton>
             <PromptInputButton className="ghost-button" type="button" onClick={onArchive}>
               <Archive size={16} /> {archiveLabel}
             </PromptInputButton>
@@ -2967,8 +3017,53 @@ const Composer = memo(function Composer({
         </PromptInputFooter>
       </PromptInputBody>
     </PromptInput>
+    {sendChoiceText !== null && (
+      <SendChoiceModal
+        disabled={Boolean(submittingAction)}
+        onClose={() => setSendChoiceText(null)}
+        onEnqueue={() => void submitSendChoice("send")}
+        onSteer={() => void submitSendChoice("steer")}
+      />
+    )}
+    </>
   );
 });
+
+function SendChoiceModal({
+  disabled,
+  onClose,
+  onEnqueue,
+  onSteer
+}: {
+  disabled: boolean;
+  onClose: () => void;
+  onEnqueue: () => void;
+  onSteer: () => void;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal send-choice-modal" role="dialog" aria-modal="true" aria-labelledby="send-choice-title">
+        <header className="modal-header">
+          <div>
+            <h2 id="send-choice-title">Active turn</h2>
+            <p className="muted">Choose how to send this input.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="send-choice-actions">
+          <button className="queue-button" type="button" onClick={onEnqueue} disabled={disabled}>
+            <Send size={16} /> Enqueue
+          </button>
+          <button className="primary-button" type="button" onClick={onSteer} disabled={disabled}>
+            <Send size={16} /> Steer active turn
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function ComposerInputStatus({
   action,
@@ -3033,9 +3128,9 @@ function contextUsageForElement(usage: TokenUsageBreakdown | null) {
 
 function sendButtonLabel(activeTurnId: string | null, submittingAction: ComposerAction | null): string {
   if (submittingAction === "send") {
-    return activeTurnId ? "Enqueuing" : "Sending";
+    return "Sending";
   }
-  return activeTurnId ? "Enqueue" : "Send";
+  return "Send";
 }
 
 function markdownFileReference(label: string, pathValue: string): string {
