@@ -134,7 +134,14 @@ textarea {
 
 .brand-block {
   gap: 12px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+}
+
+.brand-block > div:last-child {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .brand-block strong,
@@ -188,8 +195,16 @@ textarea {
 .top-actions,
 .thread-actions {
   gap: 8px;
-  flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.top-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.thread-actions {
+  flex-wrap: wrap;
 }
 
 .status-button {
