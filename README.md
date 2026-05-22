@@ -68,10 +68,9 @@ Default permissions are intentionally conservative: `on-request` approval and
 `workspace-write` sandbox. `danger-full-access`, `on-failure`, and `never`
 require `--unsafe-permissions` or `CODEX_WEB_UI_UNSAFE_PERMISSIONS=1`.
 For the common trusted local-network case, `--full-control` is a shortcut for
-unsafe permissions plus the `danger-full-access` sandbox while keeping
-`on-request` approval by default. If `approvalPolicy`, `sandbox`, or
-`full-control` is specified by CLI, environment, or config, the backend locks
-that policy and browser requests cannot override it.
+unsafe permissions, `never` approval, and the `danger-full-access` sandbox. If
+`approvalPolicy`, `sandbox`, or `full-control` is specified by CLI, environment,
+or config, the backend locks that policy and browser requests cannot override it.
 Codex approval requests are surfaced in the UI approval tray and answered
 through the authenticated `/api/client-requests/respond` endpoint.
 
@@ -115,6 +114,11 @@ To opt into full local control from config, use either:
   "permissions": "full-control"
 }
 ```
+
+Full control is intentionally broad: it starts future turns with
+`approvalPolicy: "never"` and `sandbox: "danger-full-access"`. A turn that was
+already active before the change can still surface approval requests because
+Codex received its approval policy when that turn started.
 
 Prefer `CODEX_WEB_UI_PASSWORD` and `CODEX_WEB_UI_AUTH_SECRET` environment
 variables for secrets instead of storing them in the config file.

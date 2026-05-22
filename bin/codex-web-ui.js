@@ -40,7 +40,7 @@ const codexCwd = resolvePath(pick("cwd", "CODEX_CWD", launchCwd));
 const requestedSandbox = pick("sandbox", "CODEX_WEB_UI_SANDBOX", "workspace-write");
 const fullControl = pickBoolean("fullControl", "CODEX_WEB_UI_FULL_CONTROL", false) || requestedSandbox === "full-control" || pick("permissionPreset", "CODEX_WEB_UI_PERMISSION_PRESET") === "full-control";
 const unsafePermissions = fullControl || pickBoolean("unsafePermissions", "CODEX_WEB_UI_UNSAFE_PERMISSIONS", false);
-const approvalPolicy = pick("approvalPolicy", "CODEX_WEB_UI_APPROVAL_POLICY", "on-request");
+const approvalPolicy = pick("approvalPolicy", "CODEX_WEB_UI_APPROVAL_POLICY", fullControl ? "never" : "on-request");
 const sandbox = fullControl ? "danger-full-access" : requestedSandbox;
 const permissionsSpecified = hasPermissionConfig(options) || hasPermissionConfig(config) || Boolean(
   env.CODEX_WEB_UI_APPROVAL_POLICY
@@ -572,7 +572,8 @@ Options:
                                 on-failure and never. Default: on-request
   --sandbox <mode>              read-only or workspace-write. Default:
                                 workspace-write
-  --full-control                Shortcut for --unsafe-permissions plus
+  --full-control                Shortcut for --unsafe-permissions,
+                                approval-policy never, and
                                 danger-full-access sandbox
   --unsafe-permissions          Allow danger-full-access sandbox and more
                                 permissive approval policies

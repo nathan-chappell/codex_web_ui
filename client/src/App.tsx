@@ -1022,16 +1022,19 @@ export default function App({ initialThreadId = null }: AppProps) {
       showToast("No thread id was available for this approval.");
       return;
     }
-    setThreadPermissionOverrides((current) => ({
-      ...current,
+    const nextOverrides = {
+      ...threadPermissionOverridesRef.current,
       [threadId]: { approvalPolicy: "never", sandbox: "danger-full-access" }
-    }));
+    };
+    threadPermissionOverridesRef.current = nextOverrides;
+    writeStoredThreadPermissions(nextOverrides);
+    setThreadPermissionOverrides(nextOverrides);
     showToast("Full-control permissions enabled for this thread.");
     const pendingForThread = Object.values(clientRequests)
       .filter((item) => clientRequestKey(item.id) === clientRequestKey(request.id) || threadIdFromClientRequest(item) === threadId)
       .sort((a, b) => a.receivedAt - b.receivedAt);
     for (const item of pendingForThread) {
-      await respondToClientRequest(item, hasAvailableDecision(item, "acceptForSession") ? "acceptForSession" : "accept");
+      await respondToClientRequest(item, fullControlDecision(item));
     }
   }
 
@@ -3240,6 +3243,16 @@ function approvalDecisionPayload(request: ClientRequest, decision: ApprovalDecis
     return "cancel";
   }
   return decision;
+}
+
+function fullControlDecision(request: ClientRequest): ApprovalDecision {
+  if (execpolicyDecision(request)) {
+    return "acceptWithExecpolicyAmendment";
+  }
+  if (hasAvailableDecision(request, "acceptForSession")) {
+    return "acceptForSession";
+  }
+  return "accept";
 }
 
 function threadIdFromClientRequest(request: ClientRequest): string | null {
