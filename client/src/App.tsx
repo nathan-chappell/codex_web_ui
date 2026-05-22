@@ -3715,25 +3715,38 @@ function threadTokenUsage(thread: Thread | null): ThreadTokenUsage | null {
     return null;
   }
   const record = asRecord(thread);
-  const direct = parseThreadTokenUsage(record.tokenUsage ?? record.token_usage ?? record.usage);
+  const direct = parseThreadTokenUsageFromRecord(record);
   if (direct) {
     return direct;
   }
 
   const breakdowns: TokenUsageBreakdown[] = [];
+  const snapshots: ThreadTokenUsage[] = [];
   for (const turn of thread.turns ?? []) {
     const turnRecord = asRecord(turn);
+    const turnSnapshot = parseThreadTokenUsageFromRecord(turnRecord);
+    if (turnSnapshot) {
+      snapshots.push(turnSnapshot);
+    }
     const turnUsage = parseTokenUsageBreakdown(turnRecord.tokenUsage ?? turnRecord.token_usage ?? turnRecord.usage);
     if (turnUsage) {
       breakdowns.push(turnUsage);
     }
     for (const item of turn.items ?? []) {
       const itemRecord = asRecord(item);
+      const itemSnapshot = parseThreadTokenUsageFromRecord(itemRecord);
+      if (itemSnapshot) {
+        snapshots.push(itemSnapshot);
+      }
       const itemUsage = parseTokenUsageBreakdown(itemRecord.tokenUsage ?? itemRecord.token_usage ?? itemRecord.usage);
       if (itemUsage) {
         breakdowns.push(itemUsage);
       }
     }
+  }
+  const snapshot = snapshots.at(-1);
+  if (snapshot) {
+    return snapshot;
   }
   const total = sumTokenBreakdowns(breakdowns);
   const modelContextWindow = numberFromKeys(record, ["modelContextWindow", "model_context_window", "contextWindow", "context_window", "maxTokens", "max_tokens"]);
@@ -3747,11 +3760,28 @@ function threadTokenUsage(thread: Thread | null): ThreadTokenUsage | null {
   };
 }
 
+function parseThreadTokenUsageFromRecord(record: Record<string, unknown>): ThreadTokenUsage | null {
+  return parseThreadTokenUsage(record.tokenUsage)
+    ?? parseThreadTokenUsage(record.token_usage)
+    ?? parseThreadTokenUsage(record.tokenCount)
+    ?? parseThreadTokenUsage(record.token_count)
+    ?? parseThreadTokenUsage(record.contextUsage)
+    ?? parseThreadTokenUsage(record.context_usage)
+    ?? parseThreadTokenUsage(record.usage)
+    ?? parseThreadTokenUsage(record.context)
+    ?? parseThreadTokenUsage(record.payload)
+    ?? parseThreadTokenUsage(record.info)
+    ?? parseThreadTokenUsage(record);
+}
+
 function parseThreadTokenUsage(value: unknown): ThreadTokenUsage | null {
   const record = asRecord(value);
-  const total = parseTokenUsageBreakdown(record.total) ?? parseTokenUsageBreakdown(value);
-  const last = parseTokenUsageBreakdown(record.last) ?? total;
-  const modelContextWindow = numberFromKeys(record, ["modelContextWindow", "model_context_window", "contextWindow", "context_window", "maxTokens", "max_tokens"]);
+  const info = asRecord(record.info);
+  const tokenInfo = Object.keys(info).length ? info : record;
+  const total = parseTokenUsageBreakdown(tokenInfo.total_token_usage ?? tokenInfo.totalTokenUsage ?? tokenInfo.total)
+    ?? parseTokenUsageBreakdown(value);
+  const last = parseTokenUsageBreakdown(tokenInfo.last_token_usage ?? tokenInfo.lastTokenUsage ?? tokenInfo.last) ?? total;
+  const modelContextWindow = numberFromKeys(tokenInfo, ["modelContextWindow", "model_context_window", "contextWindow", "context_window", "maxTokens", "max_tokens"]);
   return total || modelContextWindow !== null
     ? {
         total: total ?? emptyTokenBreakdown(),
