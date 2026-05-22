@@ -6,6 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { authState, isAuthenticated, loginWithPassword } from "./auth";
 import { corsHeaders } from "./cors";
+import { enforceRpcPermissions } from "./permissions";
 import { getRuntime, homeDir, projectRoot } from "./runtime";
 import type { JsonValue } from "./types";
 
@@ -128,7 +129,8 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     if (typeof body.method !== "string") {
       return json({ ok: false, error: "Missing JSON-RPC method" }, 400, cors);
     }
-    const result = await bridge.request(body.method, (body.params ?? {}) as JsonValue);
+    const params = enforceRpcPermissions(body.method, (body.params ?? {}) as JsonValue);
+    const result = await bridge.request(body.method, params);
     return json({ ok: true, result }, 200, cors);
   }
 

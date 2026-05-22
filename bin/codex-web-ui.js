@@ -29,6 +29,10 @@ const port = String(pick("port", "PORT", "4545"));
 const dataDir = resolvePath(pick("dataDir", "CODEX_WEB_UI_DATA_DIR", join(userConfigDir, "data")));
 const uploadDir = resolvePath(pick("uploadDir", "CODEX_WEB_UI_UPLOAD_DIR", join(dataDir, "uploads")));
 const codexCwd = resolvePath(pick("cwd", "CODEX_CWD", launchCwd));
+const unsafePermissions = pickBoolean("unsafePermissions", "CODEX_WEB_UI_UNSAFE_PERMISSIONS", false);
+const approvalPolicy = pick("approvalPolicy", "CODEX_WEB_UI_APPROVAL_POLICY", "on-request");
+const sandbox = pick("sandbox", "CODEX_WEB_UI_SANDBOX", "workspace-write");
+const permissionsSpecified = hasPermissionConfig(options) || hasPermissionConfig(config) || Boolean(env.CODEX_WEB_UI_APPROVAL_POLICY || env.CODEX_WEB_UI_SANDBOX || env.CODEX_WEB_UI_LOCK_PERMISSIONS);
 
 setEnv(env, "HOST", host);
 setEnv(env, "PORT", port);
@@ -42,11 +46,16 @@ setEnv(env, "CODEX_COMMAND", pick("codexCommand", "CODEX_COMMAND"));
 setEnv(env, "CODEX_CWD", codexCwd);
 setEnv(env, "CODEX_MODEL", pick("model", "CODEX_MODEL"));
 setEnv(env, "CODEX_REASONING_EFFORT", pick("reasoningEffort", "CODEX_REASONING_EFFORT"));
+setEnv(env, "CODEX_WEB_UI_APPROVAL_POLICY", approvalPolicy);
+setEnv(env, "CODEX_WEB_UI_SANDBOX", sandbox);
+setEnv(env, "CODEX_WEB_UI_UNSAFE_PERMISSIONS", unsafePermissions ? "1" : "0");
+setEnv(env, "CODEX_WEB_UI_LOCK_PERMISSIONS", permissionsSpecified ? "1" : "0");
 
 validatePort(port);
-validateSafety({ host, password: env.CODEX_WEB_UI_PASSWORD, allowPublicWithoutPassword: pickBoolean("allowPublicWithoutPassword", false) });
+validatePermissionOptions({ approvalPolicy, sandbox, unsafePermissions });
+validateSafety({ host, password: env.CODEX_WEB_UI_PASSWORD, allowPublicWithoutPassword: pickBoolean("allowPublicWithoutPassword", undefined, false) });
 
-if (pickBoolean("build", false)) {
+if (pickBoolean("build", undefined, false)) {
   await runNext(["build"], env);
 }
 
@@ -58,6 +67,7 @@ console.log(`codex-web-ui listening on http://${host}:${port}`);
 console.log(`codex-web-ui app cwd: ${packageRoot}`);
 console.log(`codex default cwd: ${env.CODEX_CWD}`);
 console.log(`runtime data dir: ${env.CODEX_WEB_UI_DATA_DIR}`);
+console.log(`permissions: approval=${env.CODEX_WEB_UI_APPROVAL_POLICY}, sandbox=${env.CODEX_WEB_UI_SANDBOX}${env.CODEX_WEB_UI_LOCK_PERMISSIONS === "1" ? ", locked" : ""}${unsafePermissions ? ", unsafe enabled" : ""}`);
 if (configPath) {
   console.log(`config file: ${configPath}`);
 }
@@ -91,7 +101,10 @@ function parseArgs(args) {
         model: { type: "string" },
         password: { type: "string" },
         port: { type: "string" },
+        "approval-policy": { type: "string" },
         "reasoning-effort": { type: "string" },
+        sandbox: { type: "string" },
+        "unsafe-permissions": { type: "boolean" },
         "upload-dir": { type: "string" }
       }
     });
@@ -99,6 +112,7 @@ function parseArgs(args) {
       allowPublicWithoutPassword: values["allow-public-without-password"],
       allowedOrigins: values["allowed-origins"],
       appServerSocket: values["app-server-socket"],
+      approvalPolicy: values["approval-policy"],
       authSecret: values["auth-secret"],
       build: values.build,
       codexCommand: values["codex-command"],
@@ -111,6 +125,8 @@ function parseArgs(args) {
       password: values.password,
       port: values.port,
       reasoningEffort: values["reasoning-effort"] ?? values.effort,
+      sandbox: values.sandbox,
+      unsafePermissions: values["unsafe-permissions"],
       uploadDir: values["upload-dir"]
     };
   } catch (error) {
@@ -128,8 +144,8 @@ function pick(name, envKey, fallback) {
   return options[name] ?? (envKey ? env[envKey] : undefined) ?? config[name] ?? fallback;
 }
 
-function pickBoolean(name, fallback) {
-  return booleanValue(options[name] ?? config[name], fallback);
+function pickBoolean(name, envKey, fallback) {
+  return booleanValue(options[name] ?? (envKey ? env[envKey] : undefined) ?? config[name], fallback);
 }
 
 function booleanValue(value, fallback) {
@@ -196,6 +212,7 @@ function normalizeConfig(raw) {
     allowPublicWithoutPassword: raw.allowPublicWithoutPassword ?? raw["allow-public-without-password"],
     allowedOrigins: raw.allowedOrigins ?? raw["allowed-origins"],
     appServerSocket: raw.appServerSocket ?? raw["app-server-socket"],
+    approvalPolicy: raw.approvalPolicy ?? raw["approval-policy"],
     authSecret: raw.authSecret ?? raw["auth-secret"],
     build: raw.build,
     codexCommand: raw.codexCommand ?? raw["codex-command"],
@@ -206,6 +223,8 @@ function normalizeConfig(raw) {
     password: raw.password,
     port: raw.port,
     reasoningEffort: raw.reasoningEffort ?? raw["reasoning-effort"] ?? raw.effort,
+    sandbox: raw.sandbox,
+    unsafePermissions: raw.unsafePermissions ?? raw["unsafe-permissions"],
     uploadDir: raw.uploadDir ?? raw["upload-dir"]
   };
 }
@@ -215,6 +234,25 @@ function validatePort(port) {
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
     fail(`Invalid port: ${port}`);
   }
+}
+
+function validatePermissionOptions({ approvalPolicy, sandbox, unsafePermissions }) {
+  const safeApprovalPolicies = new Set(["on-request", "untrusted"]);
+  const unsafeApprovalPolicies = new Set(["on-request", "untrusted", "on-failure", "never"]);
+  const safeSandboxes = new Set(["read-only", "workspace-write"]);
+  const unsafeSandboxes = new Set(["read-only", "workspace-write", "danger-full-access"]);
+  const allowedApprovalPolicies = unsafePermissions ? unsafeApprovalPolicies : safeApprovalPolicies;
+  const allowedSandboxes = unsafePermissions ? unsafeSandboxes : safeSandboxes;
+  if (!allowedApprovalPolicies.has(approvalPolicy)) {
+    fail(`Approval policy requires --unsafe-permissions: ${approvalPolicy}`);
+  }
+  if (!allowedSandboxes.has(sandbox)) {
+    fail(`Sandbox requires --unsafe-permissions: ${sandbox}`);
+  }
+}
+
+function hasPermissionConfig(value) {
+  return Boolean(value && (value.approvalPolicy !== undefined || value.sandbox !== undefined));
 }
 
 function validateSafety({ host, password, allowPublicWithoutPassword }) {
@@ -245,7 +283,7 @@ function runNext(args, env) {
     });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
-      if (code === 0) {
+      if (code === 0 || code === 130 || code === 143) {
         resolve();
         return;
       }
@@ -274,6 +312,12 @@ Options:
   --cwd <path>                  Default Codex working directory
   --model <model>               Default Codex model. Default: gpt-5.5
   --effort <effort>             Default reasoning effort. Default: high
+  --approval-policy <policy>    on-request, untrusted; unsafe also allows
+                                on-failure and never. Default: on-request
+  --sandbox <mode>              read-only or workspace-write. Default:
+                                workspace-write
+  --unsafe-permissions          Allow danger-full-access sandbox and more
+                                permissive approval policies
   --data-dir <path>             Runtime data/log directory
   --upload-dir <path>           Upload directory
   --build                       Run next build before starting
@@ -286,8 +330,11 @@ Defaults:
   Codex cwd:                    current working directory
   Data dir:                     ~/.codex-webgui/data
   Upload dir:                   ~/.codex-webgui/data/uploads
+  Permissions:                  on-request + workspace-write
 
 Precedence: CLI options > environment variables > config file > defaults.
+If approval-policy or sandbox is specified by CLI/env/config, the server locks
+that policy and browser requests cannot override it.
 `);
 }
 

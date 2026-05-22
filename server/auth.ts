@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getPermissionPolicy, type PermissionPolicy } from "./permissions";
 
 const AUTH_MODE: AuthMode = "password";
 const AUTH_TOKEN_TTL_MS = 4 * 60 * 60 * 1000;
@@ -12,7 +13,10 @@ const UNAUTHENTICATED_AUTH_STATE = {
   mode: AUTH_MODE,
   warning: AUTH_WARNING,
   user: null,
-  tokenExpiresAt: null
+  tokenExpiresAt: null,
+  get permissionPolicy() {
+    return getPermissionPolicy();
+  }
 };
 
 export type AuthMode = "password";
@@ -24,6 +28,7 @@ export type AuthState = {
   warning: string | null;
   user: AuthUser | null;
   tokenExpiresAt: number | null;
+  permissionPolicy: PermissionPolicy;
 };
 type JwtClaims = { iss: string; sub: string; role: string; iat: number; exp: number };
 
@@ -70,7 +75,8 @@ function authStateFromSession(session: AppSession): AuthState {
     mode: session.mode,
     warning: AUTH_WARNING,
     user: session.user,
-    tokenExpiresAt: session.expiresAt
+    tokenExpiresAt: session.expiresAt,
+    permissionPolicy: getPermissionPolicy()
   };
 }
 

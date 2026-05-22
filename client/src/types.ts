@@ -15,6 +15,16 @@ export interface AuthState {
   warning?: string | null;
   user?: AuthUser | null;
   tokenExpiresAt?: number | null;
+  permissionPolicy?: PermissionPolicy;
+}
+
+export interface PermissionPolicy {
+  defaultApprovalPolicy: string;
+  defaultSandbox: string;
+  locked: boolean;
+  unsafePermissions: boolean;
+  allowedApprovalPolicies: string[];
+  allowedSandboxes: string[];
 }
 
 export interface Thread {

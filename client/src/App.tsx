@@ -65,14 +65,14 @@ import {
 } from "./api";
 import type { AuthEventStream } from "./api";
 import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
-import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, Turn, UiSettings } from "./types";
 
 const defaultSettings: UiSettings = {
   cwd: "",
   model: "gpt-5.5",
   effort: "high",
   approvalPolicy: "on-request",
-  sandbox: "danger-full-access"
+  sandbox: "workspace-write"
 };
 
 type ComposerAction = "send" | "steer";
@@ -569,6 +569,7 @@ export default function App({ initialThreadId = null }: AppProps) {
         <SessionModal
           title="New Thread"
           settings={settings}
+          permissionPolicy={authInfo?.permissionPolicy}
           onClose={() => setNewSessionOpen(false)}
           onSubmit={createSession}
           includePrompt
@@ -633,6 +634,22 @@ export default function App({ initialThreadId = null }: AppProps) {
   function applyAuth(nextAuth: AuthState) {
     setAuthInfo(nextAuth);
     setAuthenticated(nextAuth.authenticated);
+    const permissionPolicy = nextAuth.permissionPolicy;
+    if (permissionPolicy) {
+      setSettings((current) => ({
+        ...current,
+        approvalPolicy: permissionPolicy.locked
+          ? permissionPolicy.defaultApprovalPolicy
+          : (permissionPolicy.allowedApprovalPolicies.includes(current.approvalPolicy)
+              ? current.approvalPolicy
+              : permissionPolicy.defaultApprovalPolicy),
+        sandbox: permissionPolicy.locked
+          ? permissionPolicy.defaultSandbox
+          : (permissionPolicy.allowedSandboxes.includes(current.sandbox)
+              ? current.sandbox
+              : permissionPolicy.defaultSandbox)
+      }));
+    }
   }
 
   async function handleRestart() {
@@ -2199,18 +2216,23 @@ const MarkdownText = memo(function MarkdownText({
 function SessionModal({
   title,
   settings,
+  permissionPolicy,
   includePrompt = false,
   onClose,
   onSubmit
 }: {
   title: string;
   settings: UiSettings;
+  permissionPolicy?: PermissionPolicy;
   includePrompt?: boolean;
   onClose: () => void;
   onSubmit: (value: { settings: UiSettings; prompt: string }) => void;
 }) {
   const [draft, setDraft] = useState(settings);
   const [prompt, setPrompt] = useState("");
+  const approvalOptions = permissionPolicy?.allowedApprovalPolicies.length ? permissionPolicy.allowedApprovalPolicies : ["on-request", "untrusted"];
+  const sandboxOptions = permissionPolicy?.allowedSandboxes.length ? permissionPolicy.allowedSandboxes : ["read-only", "workspace-write"];
+  const permissionLocked = Boolean(permissionPolicy?.locked);
   return (
     <div className="modal-backdrop">
       <form
@@ -2254,19 +2276,18 @@ function SessionModal({
           </label>
           <label className="field">
             <span>Approval policy</span>
-            <select value={draft.approvalPolicy} onChange={(event) => setDraft({ ...draft, approvalPolicy: event.target.value })}>
-              <option value="on-request">on-request</option>
-              <option value="on-failure">on-failure</option>
-              <option value="untrusted">untrusted</option>
-              <option value="never">never</option>
+            <select value={draft.approvalPolicy} onChange={(event) => setDraft({ ...draft, approvalPolicy: event.target.value })} disabled={permissionLocked}>
+              {approvalOptions.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
             </select>
           </label>
           <label className="field">
             <span>Sandbox</span>
-            <select value={draft.sandbox} onChange={(event) => setDraft({ ...draft, sandbox: event.target.value })}>
-              <option value="workspace-write">workspace-write</option>
-              <option value="read-only">read-only</option>
-              <option value="danger-full-access">danger-full-access</option>
+            <select value={draft.sandbox} onChange={(event) => setDraft({ ...draft, sandbox: event.target.value })} disabled={permissionLocked}>
+              {sandboxOptions.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
             </select>
           </label>
         </div>

@@ -58,8 +58,18 @@ codex-web-ui \
   --cwd /path/to/project \
   --model gpt-5.5 \
   --effort high \
+  --approval-policy on-request \
+  --sandbox workspace-write \
   --data-dir "$PWD/data"
 ```
+
+Default permissions are intentionally conservative: `on-request` approval and
+`workspace-write` sandbox. `danger-full-access`, `on-failure`, and `never`
+require `--unsafe-permissions` or `CODEX_WEB_UI_UNSAFE_PERMISSIONS=1`.
+If `approvalPolicy` or `sandbox` is specified by CLI, environment, or config,
+the backend locks that policy and browser requests cannot override it.
+Codex approval requests are surfaced in the UI approval tray and answered
+through the authenticated `/api/client-requests/respond` endpoint.
 
 ## Configuration
 
@@ -83,6 +93,9 @@ Example `codex-webgui.json`:
   "cwd": "/path/to/project",
   "model": "gpt-5.5",
   "reasoningEffort": "high",
+  "approvalPolicy": "on-request",
+  "sandbox": "workspace-write",
+  "unsafePermissions": false,
   "dataDir": "~/.codex-webgui/data",
   "uploadDir": "~/.codex-webgui/data/uploads",
   "allowedOrigins": "http://localhost:*,http://127.0.0.1:*"
@@ -159,6 +172,8 @@ CODEX_WEB_UI_ALLOWED_ORIGINS='http://localhost:*,http://127.0.0.1:*,http://192.1
 CODEX_WEB_UI_AUTH_SECRET='separate-token-signing-secret' npm start
 CODEX_COMMAND=codex CODEX_CWD=/path/to/project npm start
 CODEX_MODEL=gpt-5.5 CODEX_REASONING_EFFORT=high npm start
+CODEX_WEB_UI_APPROVAL_POLICY=on-request CODEX_WEB_UI_SANDBOX=workspace-write npm start
+CODEX_WEB_UI_UNSAFE_PERMISSIONS=1 CODEX_WEB_UI_SANDBOX=danger-full-access npm start
 CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
 CODEX_WEB_UI_DATA_DIR=/path/to/logs npm start
 ```
