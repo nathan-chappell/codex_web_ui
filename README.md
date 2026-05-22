@@ -22,6 +22,37 @@ npm start
 
 Open `http://127.0.0.1:4545`.
 
+## CLI
+
+The npm package exposes a `codex-web-ui` command:
+
+```bash
+codex-web-ui --help
+codex-web-ui --port 4545
+CODEX_WEB_UI_PASSWORD='change-me' codex-web-ui --host 0.0.0.0
+codex-web-ui --app-server-socket "$PWD/tmp/codex-app-server.sock" --model gpt-5.5 --effort high
+```
+
+By default the CLI binds to `127.0.0.1:4545`. Binding to a non-loopback host
+requires `CODEX_WEB_UI_PASSWORD` or `--password`; this is intentional because
+the app can read local files through authenticated preview/download endpoints.
+
+For source or git installs, run `codex-web-ui --build` once if the package does
+not include a `.next` production build.
+
+Useful CLI options:
+
+```bash
+codex-web-ui \
+  --host 127.0.0.1 \
+  --port 4545 \
+  --app-server-socket "$PWD/tmp/codex-app-server.sock" \
+  --cwd /path/to/project \
+  --model gpt-5.5 \
+  --effort high \
+  --data-dir "$PWD/data"
+```
+
 The server is protected by password auth. Login exchanges
 `CODEX_WEB_UI_PASSWORD` for a 4-hour bearer JWT stored by the browser in
 localStorage and sent as an `Authorization` header. With no password configured,
@@ -72,7 +103,7 @@ Set a strong `CODEX_WEB_UI_PASSWORD` before exposing the server to the internet.
 Useful environment variables:
 
 ```bash
-CODEX_WEB_UI_PASSWORD='change-me' PORT=4545 npm start
+CODEX_WEB_UI_PASSWORD='change-me' HOST=127.0.0.1 PORT=4545 npm start
 CODEX_WEB_UI_ALLOWED_ORIGINS='http://localhost:*,http://127.0.0.1:*,http://192.168.1.66:*,https://manifesto-tank-reliance.ngrok-free.dev' npm start
 CODEX_WEB_UI_AUTH_SECRET='separate-token-signing-secret' npm start
 CODEX_COMMAND=codex CODEX_CWD=/path/to/project npm start

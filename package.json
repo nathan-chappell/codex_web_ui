@@ -1,13 +1,36 @@
 {
   "name": "codex-web-ui",
   "version": "1.0.0",
-  "private": true,
+  "private": false,
+  "description": "Mobile-friendly web UI client for the official Codex app-server.",
   "type": "module",
+  "bin": {
+    "codex-web-ui": "./bin/codex-web-ui.js"
+  },
+  "files": [
+    "app",
+    "bin",
+    "client",
+    "components",
+    "lib",
+    "server",
+    ".next/BUILD_ID",
+    ".next/*.json",
+    ".next/*.js",
+    ".next/build",
+    ".next/package.json",
+    ".next/server",
+    ".next/static",
+    "next.config.ts",
+    "postcss.config.mjs",
+    "tsconfig.json"
+  ],
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port ${PORT:-4545}",
+    "dev": "next dev --hostname ${HOST:-127.0.0.1} --port ${PORT:-4545}",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0 --port ${PORT:-4545}",
-    "check": "tsc --noEmit"
+    "start": "node ./bin/codex-web-ui.js",
+    "check": "tsc --noEmit",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=20"
