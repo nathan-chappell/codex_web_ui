@@ -182,6 +182,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const fileExplorerLoadSeqRef = useRef(0);
   const filePreviewLoadSeqRef = useRef(0);
   const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
+  const appliedInitialThreadIdRef = useRef<string | null>(null);
   const activePaneIndexRef = useRef(activePaneIndex);
   const openThreadIdsRef = useRef<(string | null)[]>(openThreadIds);
   const openThreadsRef = useRef<Record<string, Thread>>({});
@@ -259,14 +260,26 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   useEffect(() => {
     if (!authenticated || !initialThreadId) {
+      appliedInitialThreadIdRef.current = null;
       return;
     }
+    if (appliedInitialThreadIdRef.current === initialThreadId) {
+      return;
+    }
+    appliedInitialThreadIdRef.current = initialThreadId;
     const targetPaneIndex = activePaneIndexRef.current;
-    if (openThreadIdsRef.current[targetPaneIndex] === initialThreadId && selectedThreadId === initialThreadId) {
+    const existingPaneIndex = openThreadIdsRef.current.indexOf(initialThreadId);
+    if (existingPaneIndex >= 0) {
+      activatePane(existingPaneIndex);
+      setSelectedThreadId(initialThreadId);
+      setSelectedThread(openThreadsRef.current[initialThreadId] ?? null);
+      return;
+    }
+    if (threadPaneCount > 1 && openThreadIdsRef.current.some(Boolean)) {
       return;
     }
     void selectThread(initialThreadId, targetPaneIndex, false);
-  }, [authenticated, initialThreadId, selectedThreadId]);
+  }, [authenticated, initialThreadId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1216,15 +1229,15 @@ export default function App({ initialThreadId = null }: AppProps) {
     const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
     const loadToken = ++threadLoadSeqRef.current;
     paneThreadLoadTokensRef.current[targetPaneIndex] = loadToken;
-    if (updateRoute) {
+    activatePane(targetPaneIndex);
+    setLoadingThreadByPane((current) => ({ ...current, [targetPaneIndex]: threadId }));
+    setPaneThreadId(targetPaneIndex, threadId);
+    if (updateRoute && threadPaneCount === 1) {
       const nextPath = `/thread/${encodeURIComponent(threadId)}`;
       if (pathname !== nextPath) {
         router.push(nextPath);
       }
     }
-    setLoadingThreadByPane((current) => ({ ...current, [targetPaneIndex]: threadId }));
-    setPaneThreadId(targetPaneIndex, threadId);
-    activatePane(targetPaneIndex);
     setSelectedThreadId(threadId);
     setSelectedThread(null);
     setMobilePane("thread");
