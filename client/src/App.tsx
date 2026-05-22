@@ -595,7 +595,7 @@ export default function App({ initialThreadId = null }: AppProps) {
               return (
                 <ThreadPane
                   activeTurnId={thread ? activeTurnFromThread(thread) || activeTurns[thread.id] || null : null}
-                  allThreads={mergedSessions}
+                  allThreads={visibleThreads}
                   archiveLabel={showArchived ? "Unarchive" : "Archive"}
                   isActive={paneIndex === activePaneIndex}
                   isLoading={isLoadingThread}
@@ -1738,6 +1738,7 @@ const ThreadPane = memo(function ThreadPane({
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
   const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [thread?.turns]);
+  const groupedSelectThreads = useMemo(() => groupThreadsByFolder(allThreads), [allThreads]);
 
   useEffect(() => {
     return () => {
@@ -1870,8 +1871,12 @@ const ThreadPane = memo(function ThreadPane({
         {paneCount > 1 && (
           <select className="thread-select" value={thread?.id ?? ""} onChange={(event) => event.target.value && onSelectPaneThread(event.target.value, paneIndex)}>
             <option value="">Select thread</option>
-            {allThreads.map((item) => (
-              <option key={item.id} value={item.id}>{projectNameForThread(item)} - {titleForThread(item)}</option>
+            {groupedSelectThreads.map((group) => (
+              <optgroup key={group.key} label={`${group.label} (${group.threads.length})`}>
+                {group.threads.map((item) => (
+                  <option key={item.id} value={item.id}>{threadSelectLabel(item)}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         )}
@@ -3272,6 +3277,13 @@ function approvalTitle(method: string): string {
 
 function titleForThread(thread: Thread): string {
   return thread.name || thread.preview || thread.id;
+}
+
+function threadSelectLabel(thread: Thread): string {
+  const title = titleForThread(thread);
+  const status = statusType(thread);
+  const date = formatDate(thread.updatedAt);
+  return [title, status, date].filter(Boolean).join(" - ");
 }
 
 function projectNameForThread(thread: Thread): string {
