@@ -1179,6 +1179,11 @@ textarea {
   justify-content: flex-end;
 }
 
+.composer-active-status {
+  color: #3d4a50;
+  font-weight: 850;
+}
+
 .context-trigger {
   min-height: 28px;
   border-color: #cbd8dc;

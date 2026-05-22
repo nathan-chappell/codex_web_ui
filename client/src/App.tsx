@@ -281,7 +281,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   );
   const activeThreadId = paneThreadIds[activePaneIndex] ?? null;
   const activeThread = activeThreadId ? openThreads[activeThreadId] ?? selectedThread : null;
-  const appTitle = activeThread ? titleForThread(activeThread) : "Codex Web UI";
+  const appTitle = mobilePane === "sessions" && isMobileViewport() ? "Codex Web UI" : activeThread ? titleForThread(activeThread) : "Codex Web UI";
   const selectionActive = selectedSessionIds.size > 0;
   const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
   const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
@@ -2850,7 +2850,7 @@ const Composer = memo(function Composer({
           </div>
         </div>
         <div className="composer-top-meta">
-          <span>{activeTurnId ? `Active turn ${shortId(activeTurnId)}` : "Ready"}</span>
+          {activeTurnId ? <Shimmer className="composer-active-status" duration={1.3}>Active</Shimmer> : <span>Ready</span>}
           <ContextUsageBadge usage={contextUsage} />
         </div>
       </div>
