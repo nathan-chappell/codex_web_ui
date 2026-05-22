@@ -2299,17 +2299,23 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
   if (item.type === "commandExecution") {
     const command = typeof item.command === "string" ? item.command : commandFromActions(item.commandActions);
     return (
-      <>
-        <p className="command-line">$ {command}</p>
-        <p className="muted">{[item.status, exitText(item.exitCode), item.cwd].filter(Boolean).join(" | ")}</p>
-        {typeof item.aggregatedOutput === "string" && item.aggregatedOutput && (
-          <Terminal
-            className="command-terminal"
-            isStreaming={String(item.status ?? "").toLowerCase().includes("running")}
-            output={truncate(item.aggregatedOutput, 16000)}
-          />
-        )}
-      </>
+      <details className="collapsible-output command-output">
+        <summary className="collapsible-summary">
+          <span className="summary-title command-line">$ {command || "command"}</span>
+          <span className="summary-meta">{[item.status, exitText(item.exitCode), item.cwd].filter(Boolean).join(" | ")}</span>
+        </summary>
+        <div className="collapsible-content">
+          {typeof item.aggregatedOutput === "string" && item.aggregatedOutput ? (
+            <Terminal
+              className="command-terminal"
+              isStreaming={String(item.status ?? "").toLowerCase().includes("running")}
+              output={truncate(item.aggregatedOutput, 16000)}
+            />
+          ) : (
+            <p className="muted">No command output.</p>
+          )}
+        </div>
+      </details>
     );
   }
   if (item.type === "fileChange") {
@@ -2399,37 +2405,41 @@ function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: T
       </div>
       <div className="file-change-list">
         {changes.map((change, index) => (
-          <section className="file-diff-card" key={`${change.path}-${index}`}>
-            <header className="file-diff-header">
-              <button
-                className="file-diff-path"
-                type="button"
-                onClick={() => void onOpenFile({ path: change.path, cwd, label: labelForPath(change.path) })}
-                title={change.path}
-              >
+          <details className="file-diff-card" key={`${change.path}-${index}`}>
+            <summary className="file-diff-header">
+              <span className="file-diff-path" title={change.path}>
                 <FileDiff size={15} />
                 <span>{displayDiffPath(change.path)}</span>
-              </button>
+              </span>
               <div className="file-diff-meta">
                 <span>{change.kind}</span>
                 {change.movePath && <span>from {displayDiffPath(change.movePath)}</span>}
                 <span className="diff-stat add">+{change.stats.added}</span>
                 <span className="diff-stat remove">-{change.stats.removed}</span>
               </div>
-            </header>
-            {change.lines.length > 0 ? (
-              <div className="diff-block" role="table" aria-label={`Diff for ${change.path}`}>
-                {change.lines.map((line, lineIndex) => (
-                  <div className={`diff-line ${line.kind}`} role="row" key={`${lineIndex}-${line.text}`}>
-                    <span className="diff-line-marker" aria-hidden="true">{diffMarker(line)}</span>
-                    <code>{line.text || " "}</code>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted">No textual diff available.</p>
-            )}
-          </section>
+            </summary>
+            <div className="file-diff-body">
+              <button
+                className="secondary-button file-diff-open"
+                type="button"
+                onClick={() => void onOpenFile({ path: change.path, cwd, label: labelForPath(change.path) })}
+              >
+                Open file
+              </button>
+              {change.lines.length > 0 ? (
+                <div className="diff-block" role="table" aria-label={`Diff for ${change.path}`}>
+                  {change.lines.map((line, lineIndex) => (
+                    <div className={`diff-line ${line.kind}`} role="row" key={`${lineIndex}-${line.text}`}>
+                      <span className="diff-line-marker" aria-hidden="true">{diffMarker(line)}</span>
+                      <code>{line.text || " "}</code>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">No textual diff available.</p>
+              )}
+            </div>
+          </details>
         ))}
       </div>
     </div>

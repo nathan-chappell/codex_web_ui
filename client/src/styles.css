@@ -912,6 +912,60 @@ textarea {
   color: #aebbc2;
 }
 
+.collapsible-output {
+  min-width: 0;
+}
+
+.collapsible-summary,
+.file-diff-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.collapsible-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px;
+  min-width: 0;
+}
+
+.collapsible-summary::-webkit-details-marker,
+.file-diff-header::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-summary::before,
+.file-diff-header::before {
+  content: ">";
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 850;
+  color: currentColor;
+  grid-row: 1 / span 2;
+}
+
+.collapsible-output[open] .collapsible-summary::before,
+.file-diff-card[open] .file-diff-header::before {
+  content: "v";
+}
+
+.summary-title,
+.summary-meta {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-meta {
+  color: #aebbc2;
+  font-size: 12px;
+}
+
+.collapsible-content {
+  margin-top: 10px;
+}
+
 .file-change-view {
   display: grid;
   gap: 12px;
@@ -945,9 +999,14 @@ textarea {
 
 .file-diff-header {
   display: grid;
-  gap: 7px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
   padding: 9px 10px;
   background: #f4f7f8;
+}
+
+.file-diff-card[open] .file-diff-header {
   border-bottom: 1px solid var(--line);
 }
 
@@ -958,7 +1017,6 @@ textarea {
   gap: 7px;
   color: var(--text);
   background: transparent;
-  cursor: pointer;
   font-weight: 800;
   text-align: left;
 }
@@ -976,6 +1034,16 @@ textarea {
   flex-wrap: wrap;
   color: var(--muted-text);
   font-size: 12px;
+}
+
+.file-diff-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.file-diff-open {
+  width: fit-content;
 }
 
 .diff-stat {
