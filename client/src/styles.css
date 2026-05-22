@@ -1276,6 +1276,7 @@ textarea {
 .secondary-button,
 .queue-button,
 .ghost-button,
+.nuclear-button,
 .danger-button,
 .icon-button {
   border-radius: 6px;
@@ -1312,6 +1313,16 @@ textarea {
   background: #f5bd37;
 }
 
+.nuclear-button {
+  border: 1px solid #d2b03b;
+  background: #fff4bf;
+  color: #5d4100;
+}
+
+.nuclear-button:hover {
+  background: #ffe68a;
+}
+
 .ghost-button {
   background: transparent;
   color: inherit;
@@ -1338,6 +1349,7 @@ textarea {
 .secondary-button:disabled,
 .queue-button:disabled,
 .ghost-button:disabled,
+.nuclear-button:disabled,
 .icon-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

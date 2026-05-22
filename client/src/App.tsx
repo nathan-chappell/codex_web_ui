@@ -16,6 +16,7 @@ import {
   Paperclip,
   PauseCircle,
   Plus,
+  Radiation,
   RefreshCw,
   Send,
   Trash2,
@@ -94,6 +95,7 @@ type ComposerAction = "send" | "steer";
 type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAmendment" | "decline";
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2;
+type ThreadPermissionOverride = Pick<UiSettings, "approvalPolicy" | "sandbox">;
 type StoredLayout = {
   activePaneIndex?: number;
   mobilePane?: MobilePane;
@@ -108,6 +110,7 @@ const THREAD_ITEM_BATCH_SIZE = 20;
 const SESSION_PAGE_SIZE = 50;
 const ACCOUNT_RATE_LIMIT_ID = "codex";
 const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
+const THREAD_PERMISSION_STORAGE_KEY = "codex-web-ui-thread-permissions-v1";
 const mobilePanes: MobilePane[] = ["sessions", "thread"];
 const initialStoredLayout = readStoredLayout();
 
@@ -165,6 +168,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [loadingThreadByPane, setLoadingThreadByPane] = useState<Record<number, string>>({});
   const [clientRequests, setClientRequests] = useState<Record<string, ClientRequest>>({});
   const [respondingClientRequestIds, setRespondingClientRequestIds] = useState<Set<string>>(new Set());
+  const [threadPermissionOverrides, setThreadPermissionOverrides] = useState<Record<string, ThreadPermissionOverride>>(() => readStoredThreadPermissions());
 
   const eventSourceRef = useRef<AuthEventStream | null>(null);
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
@@ -177,6 +181,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const activePaneIndexRef = useRef(activePaneIndex);
   const openThreadIdsRef = useRef<(string | null)[]>(openThreadIds);
   const openThreadsRef = useRef<Record<string, Thread>>({});
+  const threadPermissionOverridesRef = useRef<Record<string, ThreadPermissionOverride>>(threadPermissionOverrides);
   const restoredLayoutThreadsRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean; refreshEligible: boolean } | null>(null);
   const resizingSidebarRef = useRef(false);
@@ -192,6 +197,11 @@ export default function App({ initialThreadId = null }: AppProps) {
   useEffect(() => {
     openThreadsRef.current = openThreads;
   }, [openThreads]);
+
+  useEffect(() => {
+    threadPermissionOverridesRef.current = threadPermissionOverrides;
+    writeStoredThreadPermissions(threadPermissionOverrides);
+  }, [threadPermissionOverrides]);
 
   useEffect(() => {
     return () => {
@@ -587,9 +597,11 @@ export default function App({ initialThreadId = null }: AppProps) {
 
       {Object.keys(clientRequests).length > 0 && (
         <ApprovalTray
+          permissionPolicy={authInfo?.permissionPolicy}
           requests={Object.values(clientRequests)}
           respondingIds={respondingClientRequestIds}
           onRespond={handleRespondClientRequest}
+          onUpgradePermissions={upgradeThreadPermissionsFromApproval}
         />
       )}
 
@@ -918,6 +930,25 @@ export default function App({ initialThreadId = null }: AppProps) {
         return next;
       });
     }
+  }
+
+  async function upgradeThreadPermissionsFromApproval(request: ClientRequest) {
+    const policy = authInfo?.permissionPolicy;
+    if (!canUseFullControl(policy)) {
+      showToast("Full-control permissions are not allowed by this server.");
+      return;
+    }
+    const threadId = threadIdFromClientRequest(request) || selectedThreadId;
+    if (!threadId) {
+      showToast("No thread id was available for this approval.");
+      return;
+    }
+    setThreadPermissionOverrides((current) => ({
+      ...current,
+      [threadId]: { approvalPolicy: "never", sandbox: "danger-full-access" }
+    }));
+    showToast("Full-control permissions enabled for this thread.");
+    await respondToClientRequest(request, hasAvailableDecision(request, "acceptForSession") ? "acceptForSession" : "accept");
   }
 
   function switchArchiveFilter(archived: boolean) {
@@ -1500,15 +1531,16 @@ export default function App({ initialThreadId = null }: AppProps) {
   }
 
   function buildThreadLoadParams(threadId: string): Record<string, JsonValue> {
+    const permissions = threadSettingsFor(threadId);
     return compact({
       threadId,
       cwd: settings.cwd || null,
       model: settings.model || null,
-      sandbox: settings.sandbox || null
+      sandbox: permissions.sandbox || null
     });
   }
 
-  function buildTurnStartParams(threadId: string, text: string, overrides: UiSettings = settings): Record<string, JsonValue> {
+  function buildTurnStartParams(threadId: string, text: string, overrides: UiSettings = threadSettingsFor(threadId)): Record<string, JsonValue> {
     return compact({
       threadId,
       input: [{ type: "text", text }],
@@ -1518,6 +1550,11 @@ export default function App({ initialThreadId = null }: AppProps) {
       approvalPolicy: overrides.approvalPolicy || null,
       sandboxPolicy: sandboxPolicyFor(overrides.sandbox)
     });
+  }
+
+  function threadSettingsFor(threadId: string): UiSettings {
+    const override = threadPermissionOverridesRef.current[threadId];
+    return override ? { ...settings, ...override } : settings;
   }
 
   function showToast(error: unknown) {
@@ -1794,10 +1831,14 @@ const ThreadPane = memo(function ThreadPane({
 
 function ApprovalTray({
   onRespond,
+  onUpgradePermissions,
+  permissionPolicy,
   requests,
   respondingIds
 }: {
   onRespond: (request: ClientRequest, decision: ApprovalDecision) => Promise<void>;
+  onUpgradePermissions: (request: ClientRequest) => Promise<void>;
+  permissionPolicy?: PermissionPolicy;
   requests: ClientRequest[];
   respondingIds: Set<string>;
 }) {
@@ -1813,6 +1854,8 @@ function ApprovalTray({
           <ApprovalRequestCard
             key={clientRequestKey(request.id)}
             onRespond={onRespond}
+            onUpgradePermissions={onUpgradePermissions}
+            permissionPolicy={permissionPolicy}
             request={request}
             responding={respondingIds.has(clientRequestKey(request.id))}
           />
@@ -1824,10 +1867,14 @@ function ApprovalTray({
 
 function ApprovalRequestCard({
   onRespond,
+  onUpgradePermissions,
+  permissionPolicy,
   request,
   responding
 }: {
   onRespond: (request: ClientRequest, decision: ApprovalDecision) => Promise<void>;
+  onUpgradePermissions: (request: ClientRequest) => Promise<void>;
+  permissionPolicy?: PermissionPolicy;
   request: ClientRequest;
   responding: boolean;
 }) {
@@ -1837,6 +1884,7 @@ function ApprovalRequestCard({
   const reason = typeof params.reason === "string" ? params.reason : "";
   const canTrust = Boolean(execpolicyDecision(request));
   const canAcceptForSession = hasAvailableDecision(request, "acceptForSession");
+  const canUpgradePermissions = canUseFullControl(permissionPolicy) && Boolean(threadIdFromClientRequest(request));
   return (
     <Confirmation
       approval={{ id: clientRequestKey(request.id) }}
@@ -1866,6 +1914,11 @@ function ApprovalRequestCard({
         {canTrust && (
           <ConfirmationAction className="secondary-button" disabled={responding} onClick={() => void onRespond(request, "acceptWithExecpolicyAmendment")}>
             Trust command
+          </ConfirmationAction>
+        )}
+        {canUpgradePermissions && (
+          <ConfirmationAction className="nuclear-button" disabled={responding} onClick={() => void onUpgradePermissions(request)} title="Allow full permissions for this thread">
+            <Radiation size={16} /> Full control
           </ConfirmationAction>
         )}
         <ConfirmationAction className="danger-button" disabled={responding} onClick={() => void onRespond(request, "decline")}>
@@ -2864,7 +2917,7 @@ function ComposerInputStatus({
 function ContextUsageBadge({ usage }: { usage: ThreadTokenUsage | null }) {
   const total = usage?.total ?? null;
   return (
-    <Context maxTokens={usage?.modelContextWindow ?? null} usedTokens={total?.totalTokens ?? null} usage={total}>
+    <Context maxTokens={usage?.modelContextWindow ?? null} usedTokens={total?.totalTokens ?? null} usage={contextUsageForElement(total)}>
       <ContextTrigger className="context-trigger" />
       <ContextContent>
         <ContextContentHeader />
@@ -2880,6 +2933,18 @@ function ContextUsageBadge({ usage }: { usage: ThreadTokenUsage | null }) {
       </ContextContent>
     </Context>
   );
+}
+
+function contextUsageForElement(usage: TokenUsageBreakdown | null) {
+  return usage
+    ? {
+        cachedTokens: usage.cachedInputTokens,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        reasoningTokens: usage.reasoningOutputTokens,
+        totalTokens: usage.totalTokens
+      }
+    : null;
 }
 
 function sendButtonLabel(activeTurnId: string | null, submittingAction: ComposerAction | null): string {
@@ -2943,6 +3008,23 @@ function approvalDecisionPayload(request: ClientRequest, decision: ApprovalDecis
     return "cancel";
   }
   return decision;
+}
+
+function threadIdFromClientRequest(request: ClientRequest): string | null {
+  const params = asRecord(request.params);
+  if (typeof params.threadId === "string") {
+    return params.threadId;
+  }
+  return threadIdFromThread(params.thread);
+}
+
+function canUseFullControl(policy: PermissionPolicy | undefined): boolean {
+  return Boolean(
+    policy?.unsafePermissions
+    && !policy.locked
+    && policy.allowedApprovalPolicies.includes("never")
+    && policy.allowedSandboxes.includes("danger-full-access")
+  );
 }
 
 function hasAvailableDecision(request: ClientRequest, decision: string): boolean {
@@ -3196,6 +3278,40 @@ function writeStoredLayout(layout: StoredLayout, timerRef?: RefObject<number | n
   } catch {
     // Local storage is an optimization; the app still works without it.
   }
+}
+
+function readStoredThreadPermissions(): Record<string, ThreadPermissionOverride> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = asRecord(JSON.parse(window.localStorage.getItem(THREAD_PERMISSION_STORAGE_KEY) || "{}"));
+    return Object.fromEntries(
+      Object.entries(raw)
+        .map(([threadId, value]) => [threadId, parseThreadPermissionOverride(value)] as const)
+        .filter((entry): entry is readonly [string, ThreadPermissionOverride] => Boolean(entry[1]))
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredThreadPermissions(value: Record<string, ThreadPermissionOverride>): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(THREAD_PERMISSION_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Local storage is an optimization; explicit thread settings still work for the current session.
+  }
+}
+
+function parseThreadPermissionOverride(value: unknown): ThreadPermissionOverride | null {
+  const record = asRecord(value);
+  const approvalPolicy = typeof record.approvalPolicy === "string" ? record.approvalPolicy : "";
+  const sandbox = typeof record.sandbox === "string" ? record.sandbox : "";
+  return approvalPolicy && sandbox ? { approvalPolicy, sandbox } : null;
 }
 
 function parseStoredLayout(value: unknown): StoredLayout {

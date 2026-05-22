@@ -3,22 +3,22 @@
 import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { cn } from "@/lib/utils";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
 import { createContext, useContext, useMemo } from "react";
 
-type UsageLike = {
-  totalTokens?: number;
+type ContextUsage = {
   inputTokens?: number;
-  cachedInputTokens?: number;
   outputTokens?: number;
-  reasoningOutputTokens?: number;
+  reasoningTokens?: number;
+  cachedTokens?: number;
+  totalTokens?: number;
 };
 
 type ContextValue = {
   maxTokens: number | null;
-  percent: number | null;
-  usage: UsageLike;
-  usedTokens: number | null;
+  usedTokens: number;
+  usage: ContextUsage;
+  usedPercent: number | null;
 };
 
 const ContextState = createContext<ContextValue | null>(null);
@@ -31,19 +31,19 @@ export function Context({
 }: ComponentProps<typeof HoverCard> & {
   maxTokens?: number | null;
   usedTokens?: number | null;
-  usage?: UsageLike | null;
+  usage?: ContextUsage | null;
 }) {
-  const value = useMemo<ContextValue>(() => {
-    const normalizedUsage = usage ?? {};
-    const normalizedUsed = usedTokens ?? normalizedUsage.totalTokens ?? sumUsage(normalizedUsage);
-    const normalizedMax = typeof maxTokens === "number" && maxTokens > 0 ? maxTokens : null;
+  const value = useMemo(() => {
+    const safeUsage = usage ?? {};
+    const total = usedTokens ?? safeUsage.totalTokens ?? tokenTotal(safeUsage);
+    const max = maxTokens && maxTokens > 0 ? maxTokens : null;
     return {
-      maxTokens: normalizedMax,
-      percent: normalizedMax && normalizedUsed !== null ? Math.min(100, Math.max(0, (normalizedUsed / normalizedMax) * 100)) : null,
-      usage: normalizedUsage,
-      usedTokens: normalizedUsed
+      maxTokens: max,
+      usedTokens: total,
+      usage: safeUsage,
+      usedPercent: max ? Math.min(999, Math.max(0, (total / max) * 100)) : null
     };
-  }, [maxTokens, usage, usedTokens]);
+  }, [maxTokens, usedTokens, usage]);
 
   return (
     <ContextState.Provider value={value}>
@@ -52,124 +52,103 @@ export function Context({
   );
 }
 
-export function ContextTrigger({ children, className, ...props }: ComponentProps<typeof Button>) {
-  const context = useContextUsage();
+export function ContextTrigger({
+  children,
+  className,
+  type = "button",
+  ...props
+}: ComponentProps<typeof Button> & { children?: ReactNode }) {
+  const context = useContextData();
   return (
     <HoverCardTrigger asChild>
-      <Button className={cn("gap-2", className)} size="xs" type="button" variant="outline" {...props}>
-        <ContextRing percent={context.percent} />
-        {children ?? <span>{context.percent === null ? "ctx n/a" : `${Math.round(context.percent)}% ctx`}</span>}
+      <Button className={cn("gap-2", className)} size="sm" type={type} variant="outline" {...props}>
+        <ContextRing percent={context.usedPercent} />
+        {children ?? formatPercent(context.usedPercent)}
       </Button>
     </HoverCardTrigger>
   );
 }
 
 export function ContextContent({ className, ...props }: ComponentProps<typeof HoverCardContent>) {
-  return <HoverCardContent className={cn("w-72 p-0", className)} {...props} />;
+  return <HoverCardContent align="end" className={cn("w-72 p-0", className)} {...props} />;
 }
 
-export function ContextContentHeader({ children, className, ...props }: ComponentProps<"div">) {
-  const context = useContextUsage();
+export function ContextContentHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("flex items-center gap-3 border-b p-3", className)} {...props} />;
+}
+
+export function ContextContentBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("grid gap-2 p-3", className)} {...props} />;
+}
+
+export function ContextContentFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("border-t bg-muted/45 p-3 text-xs text-muted-foreground", className)} {...props} />;
+}
+
+export function ContextInputUsage(props: HTMLAttributes<HTMLDivElement>) {
+  return <UsageRow label="Input" value={useContextData().usage.inputTokens ?? 0} {...props} />;
+}
+
+export function ContextOutputUsage(props: HTMLAttributes<HTMLDivElement>) {
+  return <UsageRow label="Output" value={useContextData().usage.outputTokens ?? 0} {...props} />;
+}
+
+export function ContextReasoningUsage(props: HTMLAttributes<HTMLDivElement>) {
+  return <UsageRow label="Reasoning" value={useContextData().usage.reasoningTokens ?? 0} {...props} />;
+}
+
+export function ContextCacheUsage(props: HTMLAttributes<HTMLDivElement>) {
+  return <UsageRow label="Cache" value={useContextData().usage.cachedTokens ?? 0} {...props} />;
+}
+
+function UsageRow({ className, label, value, ...props }: HTMLAttributes<HTMLDivElement> & { label: string; value: number }) {
   return (
-    <div className={cn("flex items-center gap-3 border-b p-3", className)} {...props}>
-      <ContextRing percent={context.percent} size={36} />
-      <div className="min-w-0">
-        <div className="text-sm font-semibold">Context used</div>
-        <div className="text-xs text-muted-foreground">
-          {children ?? `${formatTokenCount(context.usedTokens)}${context.maxTokens ? ` / ${formatTokenCount(context.maxTokens)}` : ""}`}
-        </div>
-      </div>
+    <div className={cn("flex items-center justify-between gap-3 text-xs", className)} {...props}>
+      <span className="text-muted-foreground">{label}</span>
+      <strong className="font-mono font-semibold">{formatTokens(value)}</strong>
     </div>
   );
 }
 
-export function ContextContentBody({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cn("grid gap-2 p-3 text-xs", className)} {...props} />;
-}
-
-export function ContextContentFooter({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cn("border-t bg-muted/40 p-3 text-xs text-muted-foreground", className)} {...props} />;
-}
-
-export function ContextInputUsage(props: UsageRowProps) {
-  return <UsageRow label="Input" selector={(usage) => usage.inputTokens} {...props} />;
-}
-
-export function ContextOutputUsage(props: UsageRowProps) {
-  return <UsageRow label="Output" selector={(usage) => usage.outputTokens} {...props} />;
-}
-
-export function ContextReasoningUsage(props: UsageRowProps) {
-  return <UsageRow label="Reasoning" selector={(usage) => usage.reasoningOutputTokens} {...props} />;
-}
-
-export function ContextCacheUsage(props: UsageRowProps) {
-  return <UsageRow label="Cached" selector={(usage) => usage.cachedInputTokens} {...props} />;
-}
-
-type UsageRowProps = Omit<ComponentProps<"div">, "children"> & {
-  children?: ReactNode;
-};
-
-function UsageRow({
-  children,
-  className,
-  label,
-  selector,
-  ...props
-}: UsageRowProps & {
-  label: string;
-  selector: (usage: UsageLike) => number | undefined;
-}) {
-  const context = useContextUsage();
-  return (
-    <div className={cn("flex items-center justify-between gap-3", className)} {...props}>
-      <span className="text-muted-foreground">{children ?? label}</span>
-      <span className="font-medium">{formatTokenCount(selector(context.usage) ?? null)}</span>
-    </div>
-  );
-}
-
-function ContextRing({ percent, size = 18 }: { percent: number | null; size?: number }) {
-  const stroke = 3;
-  const radius = (size - stroke) / 2;
+function ContextRing({ percent }: { percent: number | null }) {
+  const radius = 8;
   const circumference = 2 * Math.PI * radius;
-  const offset = percent === null ? circumference * 0.72 : circumference * (1 - percent / 100);
+  const normalized = percent === null ? 0 : Math.min(100, Math.max(0, percent));
   return (
-    <svg aria-hidden="true" className="shrink-0 text-current" height={size} viewBox={`0 0 ${size} ${size}`} width={size}>
-      <circle cx={size / 2} cy={size / 2} fill="none" opacity="0.18" r={radius} stroke="currentColor" strokeWidth={stroke} />
+    <svg aria-hidden="true" className="size-5" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" fill="none" r={radius} stroke="currentColor" strokeOpacity="0.18" strokeWidth="2.5" />
       <circle
-        cx={size / 2}
-        cy={size / 2}
+        cx="10"
+        cy="10"
         fill="none"
         r={radius}
         stroke="currentColor"
         strokeDasharray={circumference}
-        strokeDashoffset={offset}
+        strokeDashoffset={circumference - (normalized / 100) * circumference}
         strokeLinecap="round"
-        strokeWidth={stroke}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        strokeWidth="2.5"
+        transform="rotate(-90 10 10)"
       />
     </svg>
   );
 }
 
-function useContextUsage(): ContextValue {
+function useContextData(): ContextValue {
   const context = useContext(ContextState);
   if (!context) {
-    throw new Error("Context components must be rendered inside <Context>.");
+    throw new Error("Context components must be used inside <Context>.");
   }
   return context;
 }
 
-function sumUsage(usage: UsageLike): number | null {
-  const values = [usage.inputTokens, usage.outputTokens, usage.reasoningOutputTokens].filter((value): value is number => typeof value === "number");
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+function tokenTotal(usage: ContextUsage): number {
+  return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) + (usage.reasoningTokens ?? 0);
 }
 
-function formatTokenCount(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "n/a";
-  }
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: value >= 1000 ? 1 : 0, notation: "compact" }).format(value);
+function formatPercent(value: number | null): string {
+  return value === null ? "Context" : `${Math.round(value)}%`;
+}
+
+function formatTokens(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, notation: "compact" }).format(value);
 }
