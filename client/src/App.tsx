@@ -1662,7 +1662,7 @@ export default function App({ initialThreadId = null }: AppProps) {
     if (threadId && method === "thread/tokenUsage/updated") {
       const tokenUsage = parseThreadTokenUsage(params.tokenUsage ?? params.token_usage ?? params);
       if (tokenUsage) {
-        patchOpenThread(threadId, (thread) => ({ ...thread, tokenUsage }));
+        patchOpenThread(threadId, (thread) => ({ ...thread, tokenUsage: mergeThreadTokenUsage(tokenUsage, threadTokenUsage(thread)) ?? tokenUsage }));
       }
     }
     if (method === "serverRequest/resolved") {
@@ -2505,22 +2505,24 @@ function patchTurnItem(turn: Turn, itemId: string, updateItem: (item: ThreadItem
 }
 
 function reconcileThreadUpdate(incoming: Thread, existing: Thread | undefined): Thread {
+  const mergedUsage = mergeThreadTokenUsage(threadTokenUsage(incoming), existing ? threadTokenUsage(existing) : null);
+  const nextIncoming = mergedUsage ? { ...incoming, tokenUsage: mergedUsage } : incoming;
   if (!existing) {
-    return incoming;
+    return nextIncoming;
   }
-  if (!incoming.turns?.length) {
-    return existing.turns?.length ? { ...incoming, turns: existing.turns } : incoming;
+  if (!nextIncoming.turns?.length) {
+    return existing.turns?.length ? { ...nextIncoming, turns: existing.turns } : nextIncoming;
   }
   if (!existing.turns?.length) {
-    return incoming;
+    return nextIncoming;
   }
   const existingTurns = new Map(existing.turns.map((turn) => [turn.id, turn]));
-  const incomingIds = new Set(incoming.turns.map((turn) => turn.id));
+  const incomingIds = new Set(nextIncoming.turns.map((turn) => turn.id));
   const transientTurns = existing.turns.filter((turn) => !incomingIds.has(turn.id) && isTransientTurn(turn));
   return {
-    ...incoming,
+    ...nextIncoming,
     turns: [
-      ...incoming.turns.map((turn) => reconcileTurnUpdate(turn, existingTurns.get(turn.id))),
+      ...nextIncoming.turns.map((turn) => reconcileTurnUpdate(turn, existingTurns.get(turn.id))),
       ...transientTurns
     ]
   };
@@ -4185,6 +4187,31 @@ function parseThreadTokenUsage(value: unknown): ThreadTokenUsage | null {
         modelContextWindow
       }
     : null;
+}
+
+function mergeThreadTokenUsage(next: ThreadTokenUsage | null, previous: ThreadTokenUsage | null): ThreadTokenUsage | null {
+  if (!next) {
+    return previous;
+  }
+  if (!previous) {
+    return next;
+  }
+  const nextTokens = Math.max(next.total.totalTokens, next.last.totalTokens);
+  const previousTokens = Math.max(previous.total.totalTokens, previous.last.totalTokens);
+  if (nextTokens === 0 && previousTokens > 0) {
+    return {
+      total: previous.total,
+      last: previous.last,
+      modelContextWindow: next.modelContextWindow ?? previous.modelContextWindow
+    };
+  }
+  if (next.modelContextWindow === null && previous.modelContextWindow !== null) {
+    return {
+      ...next,
+      modelContextWindow: previous.modelContextWindow
+    };
+  }
+  return next;
 }
 
 function parseTokenUsageBreakdown(value: unknown): TokenUsageBreakdown | null {
