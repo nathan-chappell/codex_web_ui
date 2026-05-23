@@ -1042,6 +1042,11 @@ textarea {
   color: #aebbc2;
 }
 
+.item.loading-item .item-body {
+  color: var(--muted-text);
+  min-height: 48px;
+}
+
 .collapsible-output {
   min-width: 0;
 }

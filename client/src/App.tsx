@@ -30,7 +30,7 @@ import {
   X
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -118,7 +118,7 @@ type StoredLayout = {
   threadPaneCount?: ThreadPaneCount;
 };
 
-const THREAD_ITEM_BATCH_SIZE = 8;
+const THREAD_ITEM_BATCH_SIZE = 20;
 const SESSION_PAGE_SIZE = 50;
 const ACCOUNT_RATE_LIMIT_ID = "codex";
 const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
@@ -221,6 +221,23 @@ export default function App({ initialThreadId = null }: AppProps) {
   const longPressTimerRef = useRef<number | null>(null);
   const longPressActivatedRef = useRef(false);
   const sessionClickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!topMenuOpen && !mobileMenuOpen && !threadActionsOpen) {
+      return;
+    }
+    function closeMenusOnOutsidePointer(event: globalThis.PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-menu-root]")) {
+        return;
+      }
+      setTopMenuOpen(false);
+      setMobileMenuOpen(false);
+      setThreadActionsOpen(false);
+    }
+    window.addEventListener("pointerdown", closeMenusOnOutsidePointer);
+    return () => window.removeEventListener("pointerdown", closeMenusOnOutsidePointer);
+  }, [mobileMenuOpen, threadActionsOpen, topMenuOpen]);
 
   useEffect(() => {
     openThreadsRef.current = openThreads;
@@ -444,7 +461,7 @@ export default function App({ initialThreadId = null }: AppProps) {
             <span className="top-action-label">Status</span>
             <StatusBadge value={serverStatus.state} />
           </button>
-          <div className="action-overflow">
+          <div className="action-overflow" data-menu-root>
             <button className="ghost-button" type="button" onClick={() => setTopMenuOpen((open) => !open)} title="More actions" aria-label="More actions" aria-expanded={topMenuOpen}>
               <MoreHorizontal size={18} />
             </button>
@@ -488,7 +505,7 @@ export default function App({ initialThreadId = null }: AppProps) {
           <button className={`status-button ${serverStatus.state === "disconnected" ? "disconnected" : ""}`} type="button" onClick={() => setStatusOpen(true)} title="Show app server status" aria-label="Show app server status">
             <Activity size={17} />
           </button>
-          <div className="action-overflow">
+          <div className="action-overflow" data-menu-root>
             <button className="ghost-button" type="button" onClick={() => setMobileMenuOpen((open) => !open)} title="More actions" aria-label="More actions" aria-expanded={mobileMenuOpen}>
               <MoreHorizontal size={18} />
             </button>
@@ -583,7 +600,7 @@ export default function App({ initialThreadId = null }: AppProps) {
               <button className="icon-button" type="button" onClick={() => setNewSessionOpen(true)} title="New thread" aria-label="New thread">
                 <MessageSquarePlus size={18} />
               </button>
-              <div className="action-overflow thread-actions-overflow">
+              <div className="action-overflow thread-actions-overflow" data-menu-root>
                 <button className="icon-button" type="button" onClick={() => setThreadActionsOpen((open) => !open)} title="Thread list actions" aria-label="Thread list actions" aria-expanded={threadActionsOpen}>
                   <MoreHorizontal size={18} />
                 </button>
@@ -1449,13 +1466,11 @@ export default function App({ initialThreadId = null }: AppProps) {
     const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
     const rememberedUsage = rememberThreadTokenUsage(thread.id, threadTokenUsage(thread));
     const incomingThread = rememberedUsage ? { ...thread, tokenUsage: rememberedUsage } : thread;
-    startTransition(() => {
-      setOpenThreads((current) => {
-        const rememberedThread = reconcileThreadUpdate(incomingThread, current[thread.id]);
-        const next = { ...current, [thread.id]: rememberedThread };
-        openThreadsRef.current = next;
-        return next;
-      });
+    setOpenThreads((current) => {
+      const rememberedThread = reconcileThreadUpdate(incomingThread, current[thread.id]);
+      const next = { ...current, [thread.id]: rememberedThread };
+      openThreadsRef.current = next;
+      return next;
     });
     if (assignPane) {
       setPaneThreadId(targetPaneIndex, thread.id);
@@ -2012,6 +2027,7 @@ const ThreadPane = memo(function ThreadPane({
   const pendingChromeStateRef = useRef<{ topHidden?: boolean; composerCollapsed?: boolean }>({});
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
+  const autoScrollRef = useRef(true);
   const itemCount = useMemo(() => countDisplayThreadItems(thread?.turns ?? []), [thread?.turns]);
   const contextUsage = useMemo(
     () => (thread ? mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsage) : null),
@@ -2030,6 +2046,7 @@ const ThreadPane = memo(function ThreadPane({
     if (!thread) {
       lastThreadViewRef.current = "";
       lastItemCountRef.current = 0;
+      autoScrollRef.current = true;
       composerManuallyCollapsedRef.current = false;
       setTopHiddenState(false);
       setComposerCollapsedState(false);
@@ -2038,13 +2055,14 @@ const ThreadPane = memo(function ThreadPane({
     if (lastThreadViewRef.current !== thread.id) {
       lastThreadViewRef.current = thread.id;
       lastItemCountRef.current = itemCount;
+      autoScrollRef.current = true;
       composerManuallyCollapsedRef.current = false;
       setTopHiddenState(isMobileViewport());
       setComposerCollapsedState(false);
       scrollToEnd();
       return;
     }
-    if (itemCount > lastItemCountRef.current) {
+    if (itemCount > lastItemCountRef.current && autoScrollRef.current) {
       scrollToEnd();
     }
     lastItemCountRef.current = itemCount;
@@ -2062,6 +2080,11 @@ const ThreadPane = memo(function ThreadPane({
     const awayFromBottom = bottomDistance > 120;
 
     conversationScrollTopRef.current = nextTop;
+    if (nearBottom) {
+      autoScrollRef.current = true;
+    } else if (scrollingTowardHistory || awayFromBottom) {
+      autoScrollRef.current = false;
+    }
 
     if (isMobileViewport()) {
       if (scrollingTowardHistory && awayFromBottom) {
@@ -2084,6 +2107,7 @@ const ThreadPane = memo(function ThreadPane({
   }
 
   function scrollToEnd() {
+    autoScrollRef.current = true;
     window.requestAnimationFrame(() => {
       const element = conversationRef.current;
       if (!element) {
@@ -2168,6 +2192,7 @@ const ThreadPane = memo(function ThreadPane({
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             <TurnHistory
               cwd={thread.cwd || null}
+              key={thread.id}
               onOpenFile={onOpenFile}
               threadId={thread.id}
               turns={thread.turns ?? []}
@@ -2468,6 +2493,8 @@ const TurnHistory = memo(function TurnHistory({
   turns: Turn[];
 }) {
   const [visibleCount, setVisibleCount] = useState(THREAD_ITEM_BATCH_SIZE);
+  const [readyItemKeys, setReadyItemKeys] = useState<Set<string>>(() => new Set());
+  const readyItemKeysRef = useRef<Set<string>>(new Set());
   const pendingScrollHeightRef = useRef<number | null>(null);
   const displayTurns = useMemo(() => dedupeTurnsForDisplay(turns), [turns]);
   const totalItemCount = useMemo(() => countDisplayThreadItems(displayTurns), [displayTurns]);
@@ -2477,8 +2504,47 @@ const TurnHistory = memo(function TurnHistory({
 
   useEffect(() => {
     setVisibleCount(THREAD_ITEM_BATCH_SIZE);
+    const emptyReadyKeys = new Set<string>();
+    readyItemKeysRef.current = emptyReadyKeys;
+    setReadyItemKeys(emptyReadyKeys);
     pendingScrollHeightRef.current = null;
   }, [threadId]);
+
+  useEffect(() => {
+    const pendingKeys = visibleThreadItemKeys(visibleTurns)
+      .reverse()
+      .filter((key) => !readyItemKeysRef.current.has(key));
+    if (pendingKeys.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    let cancelScheduledWork: (() => void) | null = null;
+    const revealNextItems = () => {
+      cancelScheduledWork = null;
+      if (cancelled) {
+        return;
+      }
+      const nextKeys = pendingKeys.splice(0, 4);
+      if (nextKeys.length > 0) {
+        setReadyItemKeys((current) => {
+          const next = new Set(current);
+          for (const key of nextKeys) {
+            next.add(key);
+          }
+          readyItemKeysRef.current = next;
+          return next;
+        });
+      }
+      if (pendingKeys.length > 0) {
+        cancelScheduledWork = scheduleThreadRenderWork(revealNextItems);
+      }
+    };
+    cancelScheduledWork = scheduleThreadRenderWork(revealNextItems);
+    return () => {
+      cancelled = true;
+      cancelScheduledWork?.();
+    };
+  }, [threadId, visibleTurns]);
 
   useLayoutEffect(() => {
     const previousHeight = pendingScrollHeightRef.current;
@@ -2522,12 +2588,46 @@ const TurnHistory = memo(function TurnHistory({
             <span className="turn-id">{turn.id}</span>
             <span className="turn-date">{formatDate(turn.startedAt)}</span>
           </div>
-          {items.map((item) => <ThreadItemView cwd={cwd} item={item} key={item.id} onOpenFile={onOpenFile} />)}
+          {items.map((item) => {
+            const renderKey = threadItemRenderKey(turn.id, item);
+            return readyItemKeys.has(renderKey)
+              ? <ThreadItemView cwd={cwd} item={item} key={renderKey} onOpenFile={onOpenFile} />
+              : <ThreadItemPlaceholder item={item} key={renderKey} />;
+          })}
         </section>
       ))}
     </>
   );
 });
+
+function visibleThreadItemKeys(visibleTurns: { turn: Turn; items: ThreadItem[] }[]): string[] {
+  return visibleTurns.flatMap(({ turn, items }) => items.map((item) => threadItemRenderKey(turn.id, item)));
+}
+
+function threadItemRenderKey(turnId: string, item: ThreadItem): string {
+  return `${turnId}:${item.id}`;
+}
+
+function scheduleThreadRenderWork(callback: () => void): () => void {
+  if (typeof window.requestIdleCallback === "function" && typeof window.cancelIdleCallback === "function") {
+    const id = window.requestIdleCallback(callback, { timeout: 80 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = window.setTimeout(callback, 0);
+  return () => window.clearTimeout(id);
+}
+
+function ThreadItemPlaceholder({ item }: { item: ThreadItem }) {
+  const label = itemLabel(typeForItemLabel(item.type));
+  return (
+    <article className={`item ${kindClass(item.type)} loading-item`}>
+      {label && <div className="item-label">{label}</div>}
+      <div className="item-body">
+        <Shimmer as="span" duration={1.2}>Loading item</Shimmer>
+      </div>
+    </article>
+  );
+}
 
 function countDisplayThreadItems(turns: Turn[]): number {
   return turns.reduce((count, turn) => count + (turn.items?.length ?? 0), 0);
@@ -3284,6 +3384,7 @@ const Composer = memo(function Composer({
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const composerMenuRef = useRef<HTMLDivElement | null>(null);
   const draftPreviewRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
@@ -3316,6 +3417,21 @@ const Composer = memo(function Composer({
       setSubmissionNotice(null);
     }
   }, [deliveryKey, deliveryVersion, submissionNotice]);
+
+  useEffect(() => {
+    if (!composerMenuOpen) {
+      return;
+    }
+    function closeComposerMenuOnOutsidePointer(event: globalThis.PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && composerMenuRef.current?.contains(target)) {
+        return;
+      }
+      setComposerMenuOpen(false);
+    }
+    window.addEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
+    return () => window.removeEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
+  }, [composerMenuOpen]);
 
   async function submitDraft(action: ComposerAction, text?: string) {
     const draftText = text ?? readDraft();
@@ -3489,7 +3605,7 @@ const Composer = memo(function Composer({
               type="file"
               onChange={(event) => void handleAttachmentFile(event.currentTarget.files?.[0])}
             />
-            <div className="composer-overflow">
+            <div className="composer-overflow" ref={composerMenuRef}>
               <PromptInputButton
                 className="icon-button"
                 type="button"
