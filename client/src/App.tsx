@@ -3320,12 +3320,23 @@ const ThreadItemView = memo(function ThreadItemView({
 }) {
   const label = itemLabel(typeForItemLabel(item.type));
   return (
-    <article className={`item ${kindClass(item.type)} ${compact ? "compact" : ""}`}>
+    <article className={`item ${kindClass(item.type)} ${messageToneClass(item)} ${compact ? "compact" : ""}`}>
       {label && <div className="item-label">{label}</div>}
       <div className="item-body">{renderItemBody(item, cwd, onOpenFile)}</div>
     </article>
   );
 });
+
+function messageToneClass(item: DisplayThreadItem): string {
+  if (item.type !== "agentMessage") {
+    return "";
+  }
+  if (isFinalAnswerItem(item as ThreadItem)) {
+    return "final-answer";
+  }
+  const phase = String(asRecord(item).phase ?? "").toLowerCase().replace(/[_\s-]+/g, "");
+  return phase === "commentary" ? "commentary" : "";
+}
 
 function typeForItemLabel(type: string): string | null {
   if (type === "agentMessage" || type === "userMessage") {

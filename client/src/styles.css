@@ -1034,6 +1034,8 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 5px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .item-label {
@@ -1047,6 +1049,8 @@ textarea {
 
 .item-body {
   min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   background: #fff;
   border: 1px solid transparent;
   border-radius: 14px;
@@ -1067,6 +1071,24 @@ textarea {
   border-color: transparent;
   padding-left: 0;
   padding-right: 0;
+}
+
+.item.agent.commentary .item-body,
+.item.agent.final-answer .item-body {
+  padding: 12px 16px;
+  color: #17242a;
+  font-size: 15px;
+}
+
+.item.agent.commentary .item-body {
+  background: #f8faf9;
+  border-color: #edf1f1;
+}
+
+.item.agent.final-answer .item-body {
+  background: #fff;
+  border-color: #e0e8e8;
+  box-shadow: 0 1px 0 rgba(17, 25, 29, 0.03);
 }
 
 .item.command .item-body {
@@ -1367,7 +1389,18 @@ textarea {
   background: #11191d;
   color: #f3f6f6;
   padding: 12px;
-  overflow: auto;
+  min-width: max-content;
+  overflow: visible;
+  white-space: pre;
+}
+
+.markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior-x: contain;
+  border-radius: 6px;
+  background: #11191d;
 }
 
 .file-link-button {
@@ -1389,15 +1422,42 @@ textarea {
 .json-block,
 .code-block {
   margin: 10px 0 0;
+  max-width: 100%;
+  min-width: 0;
   background: #11191d;
   color: #f3f6f6;
   border-radius: 6px;
   padding: 12px;
   max-height: 420px;
   overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overscroll-behavior-x: contain;
+  white-space: pre;
+  overflow-wrap: normal;
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.item-body :where(.code-block, .json-block, pre, table, .command-terminal, .tool-call-element, .reasoning-element) {
+  max-width: 100%;
+}
+
+.item-body :where(.code-block, .json-block, pre) {
+  min-width: 0;
+}
+
+.item-body .code-block {
+  overflow: hidden;
+  padding: 0;
+}
+
+.item-body .code-block > .relative {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.item-body .code-block pre {
+  min-width: max-content;
+  white-space: pre;
 }
 
 .composer {
