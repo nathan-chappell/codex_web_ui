@@ -355,7 +355,6 @@ export default function App({ initialThreadId = null }: AppProps) {
   const handleForkPaneThread = useStableCallback((thread: Thread, paneIndex: number) => forkThread(thread, paneIndex));
   const handleInterruptPaneThread = useStableCallback((thread: Thread) => interruptThread(thread));
   const handleRenamePaneThread = useStableCallback((thread: Thread, name: string) => renameThread(thread, name));
-  const handleSelectPaneThread = useStableCallback((threadId: string, paneIndex: number) => selectThread(threadId, paneIndex));
   const handleSendPaneMessage = useStableCallback((thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => sendMessageText(thread, paneIndex, text, action));
   const handleOpenFileReference = useStableCallback((reference: FileReference) => openFileReference(reference));
   const handleReferenceFile = useStableCallback((onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => openFileExplorerForReference(onSelect));
@@ -484,6 +483,9 @@ export default function App({ initialThreadId = null }: AppProps) {
           Thread
         </button>
         <div className="mobile-nav-actions">
+          <button className="ghost-button" type="button" onClick={() => setNewSessionOpen(true)} title="New thread" aria-label="New thread">
+            <MessageSquarePlus size={17} />
+          </button>
           <button className={`status-button ${serverStatus.state === "disconnected" ? "disconnected" : ""}`} type="button" onClick={() => setStatusOpen(true)} title="Show app server status" aria-label="Show app server status">
             <Activity size={17} />
           </button>
@@ -506,12 +508,6 @@ export default function App({ initialThreadId = null }: AppProps) {
                   loadSessions();
                 }}>
                   <RefreshCw size={16} /> Refresh
-                </button>
-                <button type="button" role="menuitem" onClick={() => {
-                  setMobileMenuOpen(false);
-                  setNewSessionOpen(true);
-                }}>
-                  <MessageSquarePlus size={16} /> New thread
                 </button>
                 <button type="button" role="menuitem" onClick={() => {
                   setMobileMenuOpen(false);
@@ -586,9 +582,11 @@ export default function App({ initialThreadId = null }: AppProps) {
           <div className="panel-heading">
             <div>
               <h2>Threads</h2>
-              <span>{visibleThreads.length}{hasMoreSessions ? "+" : ""} loaded</span>
             </div>
             <div className="panel-actions">
+              <button className="icon-button" type="button" onClick={() => setNewSessionOpen(true)} title="New thread" aria-label="New thread">
+                <MessageSquarePlus size={18} />
+              </button>
               <div className="action-overflow thread-actions-overflow">
                 <button className="icon-button" type="button" onClick={() => setThreadActionsOpen((open) => !open)} title="Thread list actions" aria-label="Thread list actions" aria-expanded={threadActionsOpen}>
                   <MoreHorizontal size={18} />
@@ -608,12 +606,6 @@ export default function App({ initialThreadId = null }: AppProps) {
                       loadSessions();
                     }}>
                       <RefreshCw size={16} /> Refresh
-                    </button>
-                    <button type="button" role="menuitem" onClick={() => {
-                      setThreadActionsOpen(false);
-                      setNewSessionOpen(true);
-                    }}>
-                      <MessageSquarePlus size={16} /> New thread
                     </button>
                   </div>
                 )}
@@ -739,7 +731,6 @@ export default function App({ initialThreadId = null }: AppProps) {
               return (
                 <ThreadPane
                   activeTurnId={thread ? activeTurnFromThread(thread) || activeTurns[thread.id] || null : null}
-                  allThreads={visibleThreads}
                   archiveLabel={showArchived ? "Unarchive" : "Archive"}
                   isActive={paneIndex === activePaneIndex}
                   isLoading={isLoadingThread}
@@ -754,10 +745,8 @@ export default function App({ initialThreadId = null }: AppProps) {
                   onOpenFile={handleOpenFileReference}
                   onReferenceFile={handleReferenceFile}
                   onReferenceSkill={handleReferenceSkill}
-                  onSelectPaneThread={handleSelectPaneThread}
                   onSendMessage={handleSendPaneMessage}
                   paneIndex={paneIndex}
-                  paneCount={threadPaneCount}
                   thread={thread}
                   tokenUsageByThreadId={threadTokenUsageById}
                 />
@@ -1983,7 +1972,6 @@ export default function App({ initialThreadId = null }: AppProps) {
 
 const ThreadPane = memo(function ThreadPane({
   activeTurnId,
-  allThreads,
   archiveLabel,
   isActive,
   isLoading,
@@ -1997,15 +1985,12 @@ const ThreadPane = memo(function ThreadPane({
   onOpenFile,
   onReferenceFile,
   onReferenceSkill,
-  onSelectPaneThread,
   onSendMessage,
   paneIndex,
-  paneCount,
   thread,
   tokenUsageByThreadId
 }: {
   activeTurnId: string | null;
-  allThreads: Thread[];
   archiveLabel: string;
   isActive: boolean;
   isLoading: boolean;
@@ -2019,10 +2004,8 @@ const ThreadPane = memo(function ThreadPane({
   onOpenFile: (reference: FileReference) => Promise<void>;
   onReferenceFile: (onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => void;
   onReferenceSkill: (onSelect: (skill: SkillReference) => void) => void;
-  onSelectPaneThread: (threadId: string, paneIndex: number) => void;
   onSendMessage: (thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => Promise<boolean>;
   paneIndex: number;
-  paneCount: ThreadPaneCount;
   thread: Thread | null;
   tokenUsageByThreadId: Record<string, ThreadTokenUsage>;
 }) {
@@ -2037,8 +2020,7 @@ const ThreadPane = memo(function ThreadPane({
   const pendingChromeStateRef = useRef<{ topHidden?: boolean; composerCollapsed?: boolean }>({});
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
-  const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [thread?.turns]);
-  const groupedSelectThreads = useMemo(() => groupThreadsByFolder(allThreads), [allThreads]);
+  const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + dedupeThreadItems(turn.items ?? []).length, 0), [thread?.turns]);
 
   useEffect(() => {
     return () => {
@@ -2168,23 +2150,11 @@ const ThreadPane = memo(function ThreadPane({
   return (
     <section className={`thread-panel ${topHidden ? "top-hidden" : ""} ${isActive ? "active" : ""}`} onPointerDown={() => onActivatePane(paneIndex)}>
       <header className="thread-header">
-        {paneCount > 1 && (
-          <select className="thread-select" value={thread?.id ?? ""} onChange={(event) => event.target.value && onSelectPaneThread(event.target.value, paneIndex)}>
-            <option value="">Select thread</option>
-            {groupedSelectThreads.map((group) => (
-              <optgroup key={group.key} label={`${group.label} (${group.threads.length})`}>
-                {group.threads.map((item) => (
-                  <option key={item.id} value={item.id}>{threadSelectLabel(item)}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        )}
         {thread ? (
           <div className="thread-title-block">
             <StatusBadge value={statusType(thread)} />
             <EditableThreadTitle thread={thread} onRename={(name) => onRenameThread(thread, name)} />
-            <p>{thread.cwd || "cwd unavailable"} | {thread.id}</p>
+            {thread.cwd && <p>{thread.cwd}</p>}
           </div>
         ) : isLoading ? (
           <div className="thread-title-block empty">
@@ -2501,7 +2471,7 @@ const TurnHistory = memo(function TurnHistory({
 }) {
   const [visibleCount, setVisibleCount] = useState(THREAD_ITEM_BATCH_SIZE);
   const pendingScrollHeightRef = useRef<number | null>(null);
-  const totalItemCount = useMemo(() => turns.reduce((count, turn) => count + (turn.items?.length ?? 0), 0), [turns]);
+  const totalItemCount = useMemo(() => turns.reduce((count, turn) => count + dedupeThreadItems(turn.items ?? []).length, 0), [turns]);
   const visibleTurns = useMemo(() => visibleTurnsByItemCount(turns, visibleCount), [turns, visibleCount]);
   const visibleItemCount = useMemo(() => visibleTurns.reduce((count, turn) => count + turn.items.length, 0), [visibleTurns]);
   const hiddenCount = Math.max(0, totalItemCount - visibleItemCount);
@@ -2565,7 +2535,7 @@ function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: T
   let remaining = visibleCount;
   for (let index = turns.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const turn = turns[index];
-    const items = turn?.items ?? [];
+    const items = dedupeThreadItems(turn?.items ?? []);
     if (items.length === 0) {
       continue;
     }
@@ -2574,6 +2544,39 @@ function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: T
     remaining -= visibleItems.length;
   }
   return selected;
+}
+
+function dedupeThreadItems(items: ThreadItem[]): ThreadItem[] {
+  const seenIds = new Set<string>();
+  const seenSignatures = new Set<string>();
+  const deduped: ThreadItem[] = [];
+  for (const item of items) {
+    if (seenIds.has(item.id)) {
+      continue;
+    }
+    const signature = threadItemContentSignature(item);
+    if (signature && seenSignatures.has(signature)) {
+      continue;
+    }
+    seenIds.add(item.id);
+    if (signature) {
+      seenSignatures.add(signature);
+    }
+    deduped.push(item);
+  }
+  return deduped;
+}
+
+function threadItemContentSignature(item: ThreadItem): string | null {
+  if (item.type === "userMessage") {
+    const text = userInputText(item.content).trim();
+    return text ? `userMessage:${text}` : null;
+  }
+  if (item.type === "agentMessage") {
+    const text = typeof item.text === "string" ? item.text.trim() : "";
+    return text ? `agentMessage:${text}` : null;
+  }
+  return null;
 }
 
 function patchThreadItem(
@@ -2645,13 +2648,20 @@ function reconcileTurnUpdate(incoming: Turn, existing: Turn | undefined): Turn {
   if (!existing?.items?.length || !shouldPreserveTransientItems(incoming, existing)) {
     return incoming;
   }
-  const incomingItems = incoming.items ?? [];
+  const incomingItems = dedupeThreadItems(incoming.items ?? []);
   const incomingIds = new Set(incomingItems.map((item) => item.id));
-  const transientItems = existing.items.filter((item) => !incomingIds.has(item.id));
+  const incomingSignatures = new Set(incomingItems.map(threadItemContentSignature).filter((value): value is string => Boolean(value)));
+  const transientItems = existing.items.filter((item) => {
+    if (incomingIds.has(item.id)) {
+      return false;
+    }
+    const signature = threadItemContentSignature(item);
+    return !signature || !incomingSignatures.has(signature);
+  });
   if (transientItems.length === 0) {
-    return incoming;
+    return incomingItems === incoming.items ? incoming : { ...incoming, items: incomingItems };
   }
-  return { ...incoming, items: [...incomingItems, ...transientItems] };
+  return { ...incoming, items: dedupeThreadItems([...incomingItems, ...transientItems]) };
 }
 
 function shouldPreserveTransientItems(incoming: Turn, existing: Turn): boolean {
@@ -3867,13 +3877,6 @@ function approvalTitle(method: string): string {
 
 function titleForThread(thread: Thread): string {
   return thread.name || thread.preview || thread.id;
-}
-
-function threadSelectLabel(thread: Thread): string {
-  const title = titleForThread(thread);
-  const status = statusType(thread);
-  const date = formatDate(thread.updatedAt);
-  return [title, status, date].filter(Boolean).join(" - ");
 }
 
 function projectNameForThread(thread: Thread): string {

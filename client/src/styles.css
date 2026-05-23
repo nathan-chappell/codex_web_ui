@@ -50,7 +50,7 @@ select,
 textarea {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 12px;
   background: #fff;
   color: var(--text);
   padding: 10px 11px;
@@ -375,6 +375,11 @@ textarea {
   flex: 0 0 auto;
 }
 
+.panel-actions > .icon-button:first-child {
+  background: #050505;
+  color: #fff;
+}
+
 .panel-heading h2,
 .thread-header h2,
 .modal-header h2,
@@ -429,6 +434,11 @@ textarea {
   font-size: 12px;
   font-weight: 650;
   margin-bottom: 6px;
+}
+
+.field input {
+  border-radius: 999px;
+  background: #f8f9f9;
 }
 
 .segmented,
@@ -553,8 +563,8 @@ textarea {
 }
 
 .session-row.selected {
-  background: #f1f5f5;
-  border-color: #d7dfdf;
+  background: #f3f3f3;
+  border-color: transparent;
 }
 
 .session-row.multi-selected {
@@ -747,14 +757,6 @@ textarea {
 
 .thread-title-block.empty {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.thread-select {
-  width: min(260px, 34%);
-  min-height: 36px;
-  padding: 7px 10px;
-  border-radius: 999px;
-  background: #f7f8f8;
 }
 
 .thread-title-block p {
