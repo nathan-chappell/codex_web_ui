@@ -1072,6 +1072,14 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 5px;
   min-width: 0;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
 }
 
 .collapsible-summary::-webkit-details-marker,
@@ -1088,7 +1096,7 @@ textarea {
   grid-row: 1 / span 2;
 }
 
-.collapsible-output[open] .collapsible-summary::before,
+.collapsible-output.open .collapsible-summary::before,
 .file-diff-card[open] .file-diff-header::before {
   content: "v";
 }
@@ -1107,8 +1115,42 @@ textarea {
   font-size: 12px;
 }
 
+.collapsible-content-shell {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  transition: grid-template-rows 190ms ease;
+}
+
+.collapsible-output.open .collapsible-content-shell {
+  grid-template-rows: 1fr;
+}
+
 .collapsible-content {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.collapsible-output.open .collapsible-content {
   margin-top: 10px;
+}
+
+.collated-item-list {
+  display: grid;
+  gap: 9px;
+}
+
+.item.compact {
+  margin: 0;
+}
+
+.item.compact .item-label {
+  font-size: 10px;
+}
+
+.item.command .command-group-output .item.command .item-body {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .file-change-view {
@@ -1142,15 +1184,18 @@ textarea {
   background: #fff;
 }
 
-.file-diff-header {
+.file-diff-header,
+.file-diff-card > .collapsible-summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   padding: 9px 10px;
   background: #f4f7f8;
+  color: var(--text);
 }
 
+.file-diff-card.open > .collapsible-summary,
 .file-diff-card[open] .file-diff-header {
   border-bottom: 1px solid var(--line);
 }

@@ -131,8 +131,10 @@ type StoredLayout = {
   threadPaneCount?: ThreadPaneCount;
   threadSplitRatio?: number;
 };
+type DisplayThreadItem = ThreadItem & { items?: ThreadItem[] };
 
 const THREAD_ITEM_BATCH_SIZE = 20;
+const ACTIVE_THREAD_POLL_INTERVAL_MS = 5000;
 const SESSION_PAGE_SIZE = 50;
 const THREAD_SPLIT_RESIZER_WIDTH = 8;
 const ACCOUNT_RATE_LIMIT_ID = "codex";
@@ -213,6 +215,8 @@ export default function App({ initialThreadId = null }: AppProps) {
   const eventSourceRef = useRef<AuthEventStream | null>(null);
   const recentOAuthFailureToastRef = useRef<Map<string, number>>(new Map());
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
+  const activeThreadPollInFlightRef = useRef<Set<string>>(new Set());
+  const lastThreadEventAtRef = useRef<Map<string, number>>(new Map());
   const contextReloadAttemptedThreadIdsRef = useRef<Set<string>>(new Set());
   const contextReloadInFlightThreadIdsRef = useRef<Set<string>>(new Set());
   const listTimerRef = useRef<number | null>(null);
@@ -225,6 +229,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
   const appliedInitialThreadIdRef = useRef<string | null>(null);
   const activePaneIndexRef = useRef(activePaneIndex);
+  const activeTurnsRef = useRef<Record<string, string>>({});
   const openThreadIdsRef = useRef<(string | null)[]>(openThreadIds);
   const openThreadsRef = useRef<Record<string, Thread>>({});
   const threadTokenUsageByIdRef = useRef<Record<string, ThreadTokenUsage>>({});
@@ -267,6 +272,10 @@ export default function App({ initialThreadId = null }: AppProps) {
   useEffect(() => {
     openThreadsRef.current = openThreads;
   }, [openThreads]);
+
+  useEffect(() => {
+    activeTurnsRef.current = activeTurns;
+  }, [activeTurns]);
 
   useEffect(() => {
     threadPermissionOverridesRef.current = threadPermissionOverrides;
@@ -368,6 +377,34 @@ export default function App({ initialThreadId = null }: AppProps) {
     }
     void loadMcpServerStatus();
   }, [authenticated, statusOpen]);
+
+  useEffect(() => {
+    if (!authenticated) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      const openIds = uniqueStrings(openThreadIdsRef.current);
+      for (const threadId of openIds) {
+        const thread = openThreadsRef.current[threadId];
+        if (!thread || !isThreadLikelyActive(thread, activeTurnsRef.current[threadId])) {
+          continue;
+        }
+        const lastEventAt = lastThreadEventAtRef.current.get(threadId) ?? 0;
+        if (now - lastEventAt < ACTIVE_THREAD_POLL_INTERVAL_MS || activeThreadPollInFlightRef.current.has(threadId)) {
+          continue;
+        }
+        const paneIndex = openThreadIdsRef.current.indexOf(threadId);
+        if (paneIndex < 0) {
+          continue;
+        }
+        activeThreadPollInFlightRef.current.add(threadId);
+        void readThread(threadId, paneIndex)
+          .finally(() => activeThreadPollInFlightRef.current.delete(threadId));
+      }
+    }, ACTIVE_THREAD_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [authenticated]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1850,6 +1887,9 @@ export default function App({ initialThreadId = null }: AppProps) {
     const method = typeof payload.method === "string" ? payload.method : "";
     const params = asRecord(payload.params);
     const threadId = typeof params.threadId === "string" ? params.threadId : threadIdFromThread(params.thread);
+    if (threadId) {
+      markThreadEventActivity(threadId);
+    }
 
     if (method === "mcpServer/status/updated") {
       void loadMcpServerStatus();
@@ -1994,7 +2034,18 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   function applyThreadStatus(threadId: string, status: Thread["status"]) {
     setSessions((current) => current.map((thread) => (thread.id === threadId ? { ...thread, status } : thread)));
-    setOpenThreads((current) => (current[threadId] ? { ...current, [threadId]: { ...current[threadId], status } } : current));
+    setOpenThreads((current) => {
+      if (!current[threadId]) {
+        return current;
+      }
+      const next = { ...current, [threadId]: { ...current[threadId], status } };
+      openThreadsRef.current = next;
+      return next;
+    });
+  }
+
+  function markThreadEventActivity(threadId: string) {
+    lastThreadEventAtRef.current.set(threadId, Date.now());
   }
 
   function applyStartedItem(threadId: string, turnId: string, item: ThreadItem) {
@@ -2150,6 +2201,20 @@ export default function App({ initialThreadId = null }: AppProps) {
       updateThreadGridSplitVars(threadGridRef.current, pendingThreadSplitRatioRef.current);
     });
   }
+}
+
+function uniqueStrings(values: (string | null | undefined)[]): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function isThreadLikelyActive(thread: Thread, activeTurnId: string | undefined): boolean {
+  if (activeTurnId || activeTurnFromThread(thread)) {
+    return true;
+  }
+  if (threadHasFinalAnswer(thread)) {
+    return false;
+  }
+  return isActiveTurnStatus(statusType(thread));
 }
 
 function threadGridSplitStyle(ratio: number): CSSProperties {
@@ -2889,11 +2954,11 @@ const TurnHistory = memo(function TurnHistory({
   );
 });
 
-function visibleThreadItemKeys(visibleTurns: { turn: Turn; items: ThreadItem[] }[]): string[] {
+function visibleThreadItemKeys(visibleTurns: { turn: Turn; items: DisplayThreadItem[] }[]): string[] {
   return visibleTurns.flatMap(({ turn, items }) => items.map((item) => threadItemRenderKey(turn.id, item)));
 }
 
-function threadItemRenderKey(turnId: string, item: ThreadItem): string {
+function threadItemRenderKey(turnId: string, item: DisplayThreadItem): string {
   return `${turnId}:${item.id}`;
 }
 
@@ -2906,7 +2971,7 @@ function scheduleThreadRenderWork(callback: () => void): () => void {
   return () => window.clearTimeout(id);
 }
 
-function ThreadItemPlaceholder({ item }: { item: ThreadItem }) {
+function ThreadItemPlaceholder({ item }: { item: DisplayThreadItem }) {
   const label = itemLabel(typeForItemLabel(item.type));
   return (
     <article className={`item ${kindClass(item.type)} loading-item`}>
@@ -2919,11 +2984,11 @@ function ThreadItemPlaceholder({ item }: { item: ThreadItem }) {
 }
 
 function countDisplayThreadItems(turns: Turn[]): number {
-  return turns.reduce((count, turn) => count + (turn.items?.length ?? 0), 0);
+  return turns.reduce((count, turn) => count + collateThreadItemsForDisplay(dedupeThreadItems(turn.items ?? [])).length, 0);
 }
 
-function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: Turn; items: ThreadItem[] }[] {
-  const selected: { turn: Turn; items: ThreadItem[] }[] = [];
+function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: Turn; items: DisplayThreadItem[] }[] {
+  const selected: { turn: Turn; items: DisplayThreadItem[] }[] = [];
   let remaining = visibleCount;
   for (let index = turns.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const turn = turns[index];
@@ -2942,14 +3007,66 @@ function dedupeTurnsForDisplay(turns: Turn[]): Turn[] {
   let changed = false;
   const nextTurns = turns.map((turn) => {
     const items = turn.items ?? [];
-    const nextItems = dedupeThreadItems(items);
+    const nextItems = collateThreadItemsForDisplay(dedupeThreadItems(items));
     if (nextItems === items) {
       return turn;
     }
     changed = true;
-    return { ...turn, items: nextItems };
+    return { ...turn, items: nextItems as ThreadItem[] };
   });
   return changed ? nextTurns : turns;
+}
+
+function collateThreadItemsForDisplay(items: ThreadItem[]): DisplayThreadItem[] {
+  const nextItems: DisplayThreadItem[] = [];
+  let activeGroup: { kind: "commandGroup" | "reasoningGroup"; items: ThreadItem[] } | null = null;
+  const flushGroup = () => {
+    if (!activeGroup) {
+      return;
+    }
+    nextItems.push(createDisplayGroup(activeGroup.kind, activeGroup.items));
+    activeGroup = null;
+  };
+
+  for (const item of items) {
+    const groupKind = displayGroupKind(item);
+    if (!groupKind) {
+      flushGroup();
+      nextItems.push(item);
+      continue;
+    }
+    if (!activeGroup || activeGroup.kind !== groupKind) {
+      flushGroup();
+      activeGroup = { kind: groupKind, items: [] };
+    }
+    activeGroup.items.push(item);
+  }
+  flushGroup();
+  return nextItems;
+}
+
+function displayGroupKind(item: ThreadItem): "commandGroup" | "reasoningGroup" | null {
+  if (item.type === "commandGroup" || item.type === "reasoningGroup") {
+    return null;
+  }
+  if (item.type === "commandExecution") {
+    return "commandGroup";
+  }
+  if (item.type === "reasoning") {
+    return "reasoningGroup";
+  }
+  return null;
+}
+
+function createDisplayGroup(kind: "commandGroup" | "reasoningGroup", items: ThreadItem[]): DisplayThreadItem {
+  if (items.length === 1) {
+    return items[0];
+  }
+  return {
+    id: `${kind}:${items[0]?.id ?? "start"}`,
+    type: kind,
+    items
+  };
 }
 
 function dedupeThreadItems(items: ThreadItem[]): ThreadItem[] {
@@ -3084,7 +3201,7 @@ const ThreadItemView = memo(function ThreadItemView({
   onOpenFile
 }: {
   cwd: string | null;
-  item: ThreadItem;
+  item: DisplayThreadItem;
   compact?: boolean;
   onOpenFile: (reference: FileReference) => Promise<void>;
 }) {
@@ -3108,7 +3225,13 @@ function itemLabel(type: string | null): string | null {
   return type ? labelForKind(type) : null;
 }
 
-function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (reference: FileReference) => Promise<void>) {
+function renderItemBody(item: DisplayThreadItem, cwd: string | null, onOpenFile: (reference: FileReference) => Promise<void>) {
+  if (item.type === "commandGroup") {
+    return <CommandGroupView cwd={cwd} items={item.items ?? []} onOpenFile={onOpenFile} />;
+  }
+  if (item.type === "reasoningGroup") {
+    return <ReasoningGroupView items={item.items ?? []} />;
+  }
   if (item.type === "userMessage") {
     return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={userInputText(item.content)} />;
   }
@@ -3136,12 +3259,11 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
   if (item.type === "commandExecution") {
     const command = typeof item.command === "string" ? item.command : commandFromActions(item.commandActions);
     return (
-      <details className="collapsible-output command-output">
-        <summary className="collapsible-summary">
-          <span className="summary-title command-line">$ {command || "command"}</span>
-          <span className="summary-meta">{[item.status, exitText(item.exitCode), item.cwd].filter(Boolean).join(" | ")}</span>
-        </summary>
-        <div className="collapsible-content">
+      <CollapsiblePanel
+        className="command-output"
+        meta={[item.status, exitText(item.exitCode), item.cwd].filter(Boolean).join(" | ")}
+        title={`$ ${command || "command"}`}
+      >
           {typeof item.aggregatedOutput === "string" && item.aggregatedOutput ? (
             <Terminal
               className="command-terminal"
@@ -3151,8 +3273,7 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
           ) : (
             <p className="muted">No command output.</p>
           )}
-        </div>
-      </details>
+      </CollapsiblePanel>
     );
   }
   if (item.type === "fileChange") {
@@ -3177,6 +3298,77 @@ function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (refer
     return <p>{String(item.path ?? "Image viewed")}</p>;
   }
   return <CodeBlock className="json-block" code={JSON.stringify(item, null, 2)} language="json" />;
+}
+
+function CollapsiblePanel({
+  children,
+  className = "",
+  defaultOpen = false,
+  meta,
+  title
+}: {
+  children: ReactNode;
+  className?: string;
+  defaultOpen?: boolean;
+  meta?: ReactNode;
+  title: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`collapsible-output ${open ? "open" : ""} ${className}`}>
+      <button
+        className="collapsible-summary"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="summary-title command-line">{title}</span>
+        {meta && <span className="summary-meta">{meta}</span>}
+      </button>
+      <div className="collapsible-content-shell">
+        <div className="collapsible-content">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function CommandGroupView({ cwd, items, onOpenFile }: { cwd: string | null; items: ThreadItem[]; onOpenFile: (reference: FileReference) => Promise<void> }) {
+  const statuses = compactText(items.map((item) => String(item.status ?? "")));
+  return (
+    <CollapsiblePanel
+      className="command-group-output"
+      meta={statuses.join(" | ") || `${items.length} commands`}
+      title={`Commands (${items.length})`}
+    >
+      <div className="collated-item-list">
+        {items.map((item) => (
+          <ThreadItemView compact cwd={cwd} item={item} key={item.id} onOpenFile={onOpenFile} />
+        ))}
+      </div>
+    </CollapsiblePanel>
+  );
+}
+
+function ReasoningGroupView({ items }: { items: ThreadItem[] }) {
+  const content = items.map(reasoningText).filter(Boolean).join("\n\n---\n\n") || "Reasoning";
+  const running = items.some((item) => String(item.status ?? "").toLowerCase().includes("running"));
+  return (
+    <CollapsiblePanel
+      className="reasoning-group-output"
+      meta={running ? "running" : `${items.length} entries`}
+      title={`Reasoning (${items.length})`}
+    >
+      <Reasoning className="reasoning-element" defaultOpen isStreaming={running}>
+        <ReasoningContent>{content}</ReasoningContent>
+      </Reasoning>
+    </CollapsiblePanel>
+  );
+}
+
+function reasoningText(item: ThreadItem): string {
+  const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : "";
+  const content = Array.isArray(item.content) ? item.content.join("\n\n") : "";
+  return [summary, content].filter(Boolean).join("\n\n");
 }
 
 type ToolState = Parameters<typeof ToolHeader>[0]["state"];
@@ -3242,19 +3434,24 @@ function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: T
       </div>
       <div className="file-change-list">
         {changes.map((change, index) => (
-          <details className="file-diff-card" key={`${change.path}-${index}`}>
-            <summary className="file-diff-header">
-              <span className="file-diff-path" title={change.path}>
-                <FileDiff size={15} />
-                <span>{displayDiffPath(change.path)}</span>
-              </span>
-              <div className="file-diff-meta">
+          <CollapsiblePanel
+            className="file-diff-card"
+            key={`${change.path}-${index}`}
+            meta={(
+              <span className="file-diff-meta">
                 <span>{change.kind}</span>
                 {change.movePath && <span>from {displayDiffPath(change.movePath)}</span>}
                 <span className="diff-stat add">+{change.stats.added}</span>
                 <span className="diff-stat remove">-{change.stats.removed}</span>
-              </div>
-            </summary>
+              </span>
+            )}
+            title={(
+              <span className="file-diff-path" title={change.path}>
+                <FileDiff size={15} />
+                <span>{displayDiffPath(change.path)}</span>
+              </span>
+            )}
+          >
             <div className="file-diff-body">
               <button
                 className="secondary-button file-diff-open"
@@ -3276,7 +3473,7 @@ function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: T
                 <p className="muted">No textual diff available.</p>
               )}
             </div>
-          </details>
+          </CollapsiblePanel>
         ))}
       </div>
     </div>
@@ -4876,6 +5073,10 @@ function commandFromActions(value: unknown): string {
   return value.map((item) => asRecord(item).command).filter(Boolean).join(" | ");
 }
 
+function compactText(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 function labelForKind(kind: string): string {
   const labels: Record<string, string> = {
     userMessage: "User",
@@ -4890,6 +5091,8 @@ function labelForKind(kind: string): string {
     imageGeneration: "Image",
     logEntry: "Log",
     reasoning: "Reasoning",
+    reasoningGroup: "Reasoning",
+    commandGroup: "Commands",
     plan: "Plan"
   };
   return labels[kind] || kind;
@@ -4897,8 +5100,8 @@ function labelForKind(kind: string): string {
 
 function kindClass(kind: string): string {
   if (kind === "userMessage") return "user";
-  if (kind === "agentMessage" || kind === "reasoning" || kind === "plan") return "agent";
-  if (kind === "commandExecution") return "command";
+  if (kind === "agentMessage" || kind === "reasoning" || kind === "reasoningGroup" || kind === "plan") return "agent";
+  if (kind === "commandExecution" || kind === "commandGroup") return "command";
   return "tool";
 }
 
