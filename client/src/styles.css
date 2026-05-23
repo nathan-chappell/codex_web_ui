@@ -203,6 +203,77 @@ textarea {
   flex-wrap: nowrap;
 }
 
+.action-overflow {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.action-overflow-menu,
+.composer-overflow-menu {
+  position: absolute;
+  z-index: 30;
+  width: min(240px, calc(100vw - 28px));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--text);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+}
+
+.action-overflow-menu {
+  right: 0;
+  top: calc(100% + 8px);
+}
+
+.thread-actions-menu {
+  right: 0;
+}
+
+.composer-overflow-menu {
+  left: 0;
+  bottom: calc(100% + 8px);
+}
+
+.action-overflow-menu button,
+.composer-overflow-menu button,
+.menu-check-item {
+  min-height: 38px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.action-overflow-menu button:hover,
+.composer-overflow-menu button:hover,
+.menu-check-item:hover {
+  background: #f4f5f5;
+}
+
+.action-overflow-menu button:disabled,
+.composer-overflow-menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-check-item input {
+  width: 16px;
+  min-height: 0;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+}
+
 .thread-actions {
   flex-wrap: wrap;
 }
@@ -412,9 +483,38 @@ textarea {
   background: var(--panel);
   color: var(--muted-text);
   border-bottom: 1px solid var(--line);
+  cursor: pointer;
   font-size: 11px;
   text-transform: uppercase;
   font-weight: 850;
+  list-style: none;
+  user-select: none;
+}
+
+.thread-group-heading::-webkit-details-marker {
+  display: none;
+}
+
+.thread-group-heading::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 160ms ease;
+}
+
+.thread-group[open] .thread-group-heading::before {
+  transform: rotate(45deg);
+}
+
+.thread-group-heading strong {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-group-heading span {
@@ -1214,9 +1314,9 @@ textarea {
 .composer {
   border-top: 1px solid var(--line);
   background: var(--panel);
-  padding: 14px 18px 16px;
+  padding: 12px 16px 14px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   overflow: hidden;
   transition:
     padding 190ms ease,
@@ -1224,9 +1324,13 @@ textarea {
     background-color 190ms ease;
 }
 
+.composer:not(.collapsed) {
+  overflow: visible;
+}
+
 .composer [data-slot="input-group"] {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   height: auto;
   align-items: stretch;
   overflow: visible;
@@ -1243,13 +1347,17 @@ textarea {
 
 .composer-body {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   max-height: 360px;
   opacity: 1;
   overflow: hidden;
   transition:
     max-height 210ms ease,
     opacity 140ms ease;
+}
+
+.composer:not(.collapsed) .composer-body {
+  overflow: visible;
 }
 
 .composer-body[data-slot="input-group-addon"] {
@@ -1280,6 +1388,10 @@ textarea {
 .composer-bottom {
   justify-content: space-between;
   gap: 12px;
+}
+
+.composer-bottom {
+  overflow: visible;
 }
 
 .composer-top-left,
@@ -1328,9 +1440,19 @@ textarea {
 
 .composer-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  width: 100%;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.composer-overflow {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.composer-overflow-menu {
+  bottom: calc(100% + 8px);
 }
 
 .file-input {
@@ -1344,8 +1466,8 @@ textarea {
 .composer textarea,
 .composer-markdown-preview {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
+  border-radius: 16px;
+  background: #f8f9f9;
   color: var(--text);
   padding: 10px 12px;
 }
@@ -1377,6 +1499,7 @@ textarea {
   position: absolute;
   z-index: 2;
   background: transparent;
+  border-color: transparent;
   color: transparent;
   caret-color: var(--text);
 }
@@ -1407,13 +1530,13 @@ textarea {
 
 .composer-input-status {
   width: fit-content;
-  min-height: 28px;
+  min-height: 26px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: #f8f9f9;
   color: var(--muted-text);
   padding: 4px 10px;
   font-size: 12px;
@@ -1492,6 +1615,16 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 7px;
+}
+
+.composer .primary-button,
+.composer .secondary-button,
+.composer .queue-button,
+.composer .ghost-button,
+.composer .nuclear-button,
+.composer .danger-button,
+.composer .icon-button {
+  border-radius: 999px;
 }
 
 .primary-button {
@@ -2242,7 +2375,7 @@ textarea {
   .top-actions {
     width: auto;
     display: grid;
-    grid-template-columns: repeat(4, 42px);
+    grid-template-columns: repeat(2, 42px);
     gap: 8px;
   }
 
@@ -2533,6 +2666,10 @@ textarea {
     padding: 0;
   }
 
+  .composer-bottom {
+    overflow: visible;
+  }
+
   .composer-top::-webkit-scrollbar,
   .composer-bottom::-webkit-scrollbar,
   .composer-actions::-webkit-scrollbar {
@@ -2555,7 +2692,7 @@ textarea {
     flex: 0 0 auto;
     flex-wrap: nowrap;
     justify-content: flex-start;
-    overflow-x: auto;
+    overflow: visible;
     overscroll-behavior-x: contain;
     gap: 8px;
   }

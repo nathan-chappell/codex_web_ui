@@ -163,6 +163,8 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [mobilePane, setMobilePane] = useState<MobilePane>(() => initialStoredLayout.mobilePane ?? "sessions");
   const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(() => initialStoredLayout.threadPaneCount ?? 1);
   const [toast, setToast] = useState("");
+  const [topMenuOpen, setTopMenuOpen] = useState(false);
+  const [threadActionsOpen, setThreadActionsOpen] = useState(false);
   const [settings, setSettings] = useState<UiSettings>({ ...defaultSettings });
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -431,15 +433,33 @@ export default function App({ initialThreadId = null }: AppProps) {
             <span className="top-action-label">Status</span>
             <StatusBadge value={serverStatus.state} />
           </button>
-          <button className="ghost-button" type="button" onClick={() => void openFileExplorer()} title="Browse files" aria-label="Browse files">
-            <Folder size={16} /> <span className="top-action-label">Files</span>
-          </button>
-          <button className="ghost-button" type="button" onClick={handleRestart} title="Reconnect" aria-label="Reconnect">
-            <RefreshCw size={16} /> <span className="top-action-label">Reconnect</span>
-          </button>
-          <button className="ghost-button" type="button" onClick={() => void handleLogout()} title="Logout" aria-label="Logout">
-            <LogOut size={16} /> <span className="top-action-label">Logout</span>
-          </button>
+          <div className="action-overflow">
+            <button className="ghost-button" type="button" onClick={() => setTopMenuOpen((open) => !open)} title="More actions" aria-label="More actions" aria-expanded={topMenuOpen}>
+              <MoreHorizontal size={18} />
+            </button>
+            {topMenuOpen && (
+              <div className="action-overflow-menu top-overflow-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => {
+                  setTopMenuOpen(false);
+                  void openFileExplorer();
+                }}>
+                  <Folder size={16} /> Files
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setTopMenuOpen(false);
+                  void handleRestart();
+                }}>
+                  <RefreshCw size={16} /> Reconnect
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setTopMenuOpen(false);
+                  void handleLogout();
+                }}>
+                  <LogOut size={16} /> Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -504,20 +524,35 @@ export default function App({ initialThreadId = null }: AppProps) {
               <span>{visibleThreads.length}{hasMoreSessions ? "+" : ""} loaded</span>
             </div>
             <div className="panel-actions">
-              <label className="compact-checkbox" title="Show only recent threads">
-                <input type="checkbox" checked={recentOnly} onChange={(event) => setRecentOnlyFilter(event.target.checked)} />
-                <span>Recent</span>
-              </label>
-              <label className="compact-checkbox" title="Show archived threads">
-                <input type="checkbox" checked={showArchived} onChange={(event) => switchArchiveFilter(event.target.checked)} />
-                <span>Archived</span>
-              </label>
-              <button className="icon-button" type="button" onClick={() => loadSessions()} title="Refresh threads" aria-label="Refresh threads">
-                <RefreshCw size={17} />
-              </button>
-              <button className="icon-button" type="button" onClick={() => setNewSessionOpen(true)} title="New thread" aria-label="New thread">
-                <MessageSquarePlus size={18} />
-              </button>
+              <div className="action-overflow thread-actions-overflow">
+                <button className="icon-button" type="button" onClick={() => setThreadActionsOpen((open) => !open)} title="Thread list actions" aria-label="Thread list actions" aria-expanded={threadActionsOpen}>
+                  <MoreHorizontal size={18} />
+                </button>
+                {threadActionsOpen && (
+                  <div className="action-overflow-menu thread-actions-menu" role="menu">
+                    <label className="menu-check-item">
+                      <input type="checkbox" checked={recentOnly} onChange={(event) => setRecentOnlyFilter(event.target.checked)} />
+                      <span>Recent</span>
+                    </label>
+                    <label className="menu-check-item">
+                      <input type="checkbox" checked={showArchived} onChange={(event) => switchArchiveFilter(event.target.checked)} />
+                      <span>Archived</span>
+                    </label>
+                    <button type="button" role="menuitem" onClick={() => {
+                      setThreadActionsOpen(false);
+                      loadSessions();
+                    }}>
+                      <RefreshCw size={16} /> Refresh
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => {
+                      setThreadActionsOpen(false);
+                      setNewSessionOpen(true);
+                    }}>
+                      <MessageSquarePlus size={16} /> New thread
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div className="session-tools">
@@ -555,11 +590,11 @@ export default function App({ initialThreadId = null }: AppProps) {
               <p className="muted empty-pad">No threads found.</p>
             ) : (
               groupedThreads.map((group) => (
-                <section className="thread-group" key={group.key}>
-                  <div className="thread-group-heading">
+                <details className="thread-group" key={group.key}>
+                  <summary className="thread-group-heading">
                     <strong>{group.label}</strong>
                     <span>{group.threads.length}</span>
-                  </div>
+                  </summary>
                   {group.threads.map((thread) => (
                     <button
                       key={thread.id}
@@ -582,7 +617,7 @@ export default function App({ initialThreadId = null }: AppProps) {
                       </div>
                     </button>
                   ))}
-                </section>
+                </details>
               ))
             )}
             {hasMoreSessions && (
@@ -3053,6 +3088,7 @@ const Composer = memo(function Composer({
   const [uploading, setUploading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -3063,6 +3099,7 @@ const Composer = memo(function Composer({
     deliveryKeyRef.current = deliveryKey;
     setSubmissionNotice(null);
     setSubmittingAction(null);
+    setComposerMenuOpen(false);
     setSendChoiceText(null);
   }, [deliveryKey]);
 
@@ -3216,17 +3253,6 @@ const Composer = memo(function Composer({
           >
             {collapsed ? <ChevronsUp size={17} /> : <ChevronsDown size={17} />}
           </PromptInputButton>
-          <div className="composer-tool-buttons">
-            <PromptInputButton className="icon-button danger-icon-button" type="button" onClick={onInterrupt} disabled={!activeTurnId} tooltip="Interrupt" aria-label="Interrupt">
-              <PauseCircle size={17} />
-            </PromptInputButton>
-            <PromptInputButton className="icon-button" type="button" onClick={onFork} tooltip="Fork thread" aria-label="Fork thread">
-              <GitFork size={17} />
-            </PromptInputButton>
-            <PromptInputButton className="icon-button" type="button" onClick={onCompact} tooltip="Compact thread" aria-label="Compact thread">
-              <Minimize2 size={17} />
-            </PromptInputButton>
-          </div>
         </div>
         <div className="composer-top-meta">
           {activeTurnId ? <Shimmer className="composer-active-status" duration={1.3}>Active</Shimmer> : <span>Ready</span>}
@@ -3256,42 +3282,67 @@ const Composer = memo(function Composer({
               type="file"
               onChange={(event) => void handleAttachmentFile(event.currentTarget.files?.[0])}
             />
-            <PromptInputButton
-              className="icon-button"
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading || Boolean(submittingAction)}
-              tooltip="Attach file"
-              aria-label="Attach file"
-            >
-              <Paperclip size={17} />
-            </PromptInputButton>
-            <PromptInputButton
-              className="icon-button"
-              type="button"
-              onClick={() => insertDraftText("@")}
-              disabled={Boolean(submittingAction)}
-              tooltip="Reference file"
-              aria-label="Reference file"
-            >
-              <AtSign size={17} />
-            </PromptInputButton>
-            <PromptInputButton
-              className="icon-button"
-              type="button"
-              onClick={() => insertDraftText("$")}
-              disabled={Boolean(submittingAction)}
-              tooltip="Reference skill"
-              aria-label="Reference skill"
-            >
-              <DollarSign size={17} />
-            </PromptInputButton>
+            <div className="composer-overflow">
+              <PromptInputButton
+                className="icon-button"
+                type="button"
+                onClick={() => setComposerMenuOpen((open) => !open)}
+                tooltip="More composer actions"
+                aria-label="More composer actions"
+                aria-expanded={composerMenuOpen}
+              >
+                <MoreHorizontal size={18} />
+              </PromptInputButton>
+              {composerMenuOpen && (
+                <div className="composer-overflow-menu" role="menu">
+                  <button type="button" role="menuitem" disabled={uploading || Boolean(submittingAction)} onClick={() => {
+                    setComposerMenuOpen(false);
+                    fileInputRef.current?.click();
+                  }}>
+                    <Paperclip size={16} /> Attach file
+                  </button>
+                  <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={() => {
+                    setComposerMenuOpen(false);
+                    insertDraftText("@");
+                  }}>
+                    <AtSign size={16} /> Reference file
+                  </button>
+                  <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={() => {
+                    setComposerMenuOpen(false);
+                    insertDraftText("$");
+                  }}>
+                    <DollarSign size={16} /> Reference skill
+                  </button>
+                  <button type="button" role="menuitem" disabled={!activeTurnId} onClick={() => {
+                    setComposerMenuOpen(false);
+                    onInterrupt();
+                  }}>
+                    <PauseCircle size={16} /> Interrupt
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => {
+                    setComposerMenuOpen(false);
+                    onFork();
+                  }}>
+                    <GitFork size={16} /> Fork
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => {
+                    setComposerMenuOpen(false);
+                    onCompact();
+                  }}>
+                    <Minimize2 size={16} /> Compact
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => {
+                    setComposerMenuOpen(false);
+                    onArchive();
+                  }}>
+                    <Archive size={16} /> {archiveLabel}
+                  </button>
+                </div>
+              )}
+            </div>
             <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
             </button>
-            <PromptInputButton className="icon-button" type="button" onClick={onArchive} tooltip={archiveLabel} aria-label={archiveLabel}>
-              <Archive size={17} />
-            </PromptInputButton>
           </PromptInputTools>
         </PromptInputFooter>
       </PromptInputBody>
