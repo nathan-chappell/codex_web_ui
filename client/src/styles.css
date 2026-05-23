@@ -304,6 +304,10 @@ textarea {
   display: none;
 }
 
+.mobile-nav-actions {
+  display: none;
+}
+
 .pull-refresh-indicator {
   position: fixed;
   left: 50%;
@@ -2373,10 +2377,7 @@ textarea {
   }
 
   .top-actions {
-    width: auto;
-    display: grid;
-    grid-template-columns: repeat(2, 42px);
-    gap: 8px;
+    display: none;
   }
 
   .status-button {
@@ -2431,8 +2432,8 @@ textarea {
 
   .mobile-pane-tabs {
     display: grid;
-    grid-template-columns: repeat(2, max-content);
-    justify-content: start;
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    align-items: center;
     gap: 10px;
     padding: 10px 18px 16px;
     border-bottom: 0;
@@ -2457,6 +2458,50 @@ textarea {
   .mobile-pane-tabs button.selected {
     background: #050505;
     color: #fff;
+  }
+
+  .mobile-nav-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .mobile-nav-actions > .status-button,
+  .mobile-nav-actions .ghost-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    border: 0;
+    border-radius: 999px;
+    background: #f6f6f6;
+    color: #0a0a0a;
+    padding: 0;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+  }
+
+  .mobile-overflow-menu {
+    right: 0;
+  }
+
+  .mobile-pane-tabs .action-overflow-menu button,
+  .mobile-pane-tabs .menu-check-item {
+    min-height: 38px;
+    border-radius: 10px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 650;
+    justify-content: flex-start;
+    padding: 8px 10px;
+  }
+
+  .mobile-pane-tabs .action-overflow-menu button:hover,
+  .mobile-pane-tabs .menu-check-item:hover {
+    background: #f4f5f5;
   }
 
   .layout {
@@ -2489,9 +2534,7 @@ textarea {
   }
 
   .sessions-panel .panel-heading {
-    justify-content: flex-end;
-    padding: 0 18px 12px;
-    border-bottom: 0;
+    display: none;
   }
 
   .sessions-panel .session-tools {

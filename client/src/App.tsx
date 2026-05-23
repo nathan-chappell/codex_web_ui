@@ -164,6 +164,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(() => initialStoredLayout.threadPaneCount ?? 1);
   const [toast, setToast] = useState("");
   const [topMenuOpen, setTopMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [threadActionsOpen, setThreadActionsOpen] = useState(false);
   const [settings, setSettings] = useState<UiSettings>({ ...defaultSettings });
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -470,6 +471,58 @@ export default function App({ initialThreadId = null }: AppProps) {
         <button className={mobilePane === "thread" ? "selected" : ""} type="button" onClick={() => setMobilePane("thread")}>
           Thread
         </button>
+        <div className="mobile-nav-actions">
+          <button className={`status-button ${serverStatus.state === "disconnected" ? "disconnected" : ""}`} type="button" onClick={() => setStatusOpen(true)} title="Show app server status" aria-label="Show app server status">
+            <Activity size={17} />
+          </button>
+          <div className="action-overflow">
+            <button className="ghost-button" type="button" onClick={() => setMobileMenuOpen((open) => !open)} title="More actions" aria-label="More actions" aria-expanded={mobileMenuOpen}>
+              <MoreHorizontal size={18} />
+            </button>
+            {mobileMenuOpen && (
+              <div className="action-overflow-menu mobile-overflow-menu" role="menu">
+                <label className="menu-check-item">
+                  <input type="checkbox" checked={recentOnly} onChange={(event) => setRecentOnlyFilter(event.target.checked)} />
+                  <span>Recent</span>
+                </label>
+                <label className="menu-check-item">
+                  <input type="checkbox" checked={showArchived} onChange={(event) => switchArchiveFilter(event.target.checked)} />
+                  <span>Archived</span>
+                </label>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMobileMenuOpen(false);
+                  loadSessions();
+                }}>
+                  <RefreshCw size={16} /> Refresh
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMobileMenuOpen(false);
+                  setNewSessionOpen(true);
+                }}>
+                  <MessageSquarePlus size={16} /> New thread
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMobileMenuOpen(false);
+                  void openFileExplorer();
+                }}>
+                  <Folder size={16} /> Files
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMobileMenuOpen(false);
+                  void handleRestart();
+                }}>
+                  <RefreshCw size={16} /> Reconnect
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMobileMenuOpen(false);
+                  void handleLogout();
+                }}>
+                  <LogOut size={16} /> Logout
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </nav>
 
       <div
