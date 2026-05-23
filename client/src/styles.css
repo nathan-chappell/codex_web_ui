@@ -857,27 +857,20 @@ textarea {
 .history-limit {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  background: #fff7e8;
-  color: #6f4a00;
-  border: 1px solid #efd6a8;
+  justify-content: center;
+  gap: 9px;
+  color: var(--muted-text);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   margin-bottom: 14px;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.history-limit button {
-  background: #fff;
-  border: 1px solid #e0bd7c;
-  border-radius: 6px;
-  color: #6f4a00;
-  cursor: pointer;
-  font-weight: 750;
-  min-height: 32px;
-  padding: 6px 10px;
-  flex: 0 0 auto;
+.history-count {
+  color: color-mix(in srgb, var(--muted-text) 74%, #fff);
+  font-weight: 650;
 }
 
 .approval-tray {

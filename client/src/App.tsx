@@ -2495,6 +2495,8 @@ const TurnHistory = memo(function TurnHistory({
   const [visibleCount, setVisibleCount] = useState(THREAD_ITEM_BATCH_SIZE);
   const [readyItemKeys, setReadyItemKeys] = useState<Set<string>>(() => new Set());
   const readyItemKeysRef = useRef<Set<string>>(new Set());
+  const loadEarlierRef = useRef<HTMLDivElement | null>(null);
+  const loadingEarlierRef = useRef(false);
   const pendingScrollHeightRef = useRef<number | null>(null);
   const displayTurns = useMemo(() => dedupeTurnsForDisplay(turns), [turns]);
   const totalItemCount = useMemo(() => countDisplayThreadItems(displayTurns), [displayTurns]);
@@ -2507,8 +2509,30 @@ const TurnHistory = memo(function TurnHistory({
     const emptyReadyKeys = new Set<string>();
     readyItemKeysRef.current = emptyReadyKeys;
     setReadyItemKeys(emptyReadyKeys);
+    loadingEarlierRef.current = false;
     pendingScrollHeightRef.current = null;
   }, [threadId]);
+
+  useEffect(() => {
+    const sentinel = loadEarlierRef.current;
+    const root = scrollContainerRef.current;
+    if (!sentinel || !root || hiddenCount === 0) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting || loadingEarlierRef.current) {
+          return;
+        }
+        loadingEarlierRef.current = true;
+        pendingScrollHeightRef.current = root.scrollHeight;
+        setVisibleCount((current) => Math.min(totalItemCount, current + THREAD_ITEM_BATCH_SIZE));
+      },
+      { root, rootMargin: "160px 0px 0px 0px", threshold: 0.01 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hiddenCount, scrollContainerRef, totalItemCount, visibleCount]);
 
   useEffect(() => {
     const pendingKeys = visibleThreadItemKeys(visibleTurns)
@@ -2554,6 +2578,7 @@ const TurnHistory = memo(function TurnHistory({
     }
     element.scrollTop += element.scrollHeight - previousHeight;
     pendingScrollHeightRef.current = null;
+    loadingEarlierRef.current = false;
   }, [scrollContainerRef, visibleCount]);
 
   if (turns.length === 0 || totalItemCount === 0) {
@@ -2567,18 +2592,10 @@ const TurnHistory = memo(function TurnHistory({
   return (
     <>
       {hiddenCount > 0 && (
-        <div className="history-limit">
-          Showing latest {visibleItemCount} of {totalItemCount} items.
-          <button
-            type="button"
-            onClick={() => {
-              const element = scrollContainerRef.current;
-              pendingScrollHeightRef.current = element?.scrollHeight ?? null;
-              setVisibleCount((current) => Math.min(totalItemCount, current + THREAD_ITEM_BATCH_SIZE));
-            }}
-          >
-            Load earlier
-          </button>
+        <div className="history-limit" ref={loadEarlierRef} aria-live="polite">
+          <span className="spinner" aria-hidden="true" />
+          <span>Loading earlier items</span>
+          <span className="history-count">{visibleItemCount} of {totalItemCount}</span>
         </div>
       )}
       {visibleTurns.map(({ turn, items }) => (
