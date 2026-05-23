@@ -154,7 +154,7 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     if (!name) {
       return json({ ok: false, error: "Missing MCP server name" }, 400, cors);
     }
-    const result = asRecord(await bridge.request("mcpServer/oauth/login", { server: name }));
+    const result = asRecord(await bridge.request("mcpServer/oauth/login", { name }));
     const authorizationUrl = typeof result.authorization_url === "string"
       ? result.authorization_url
       : typeof result.authorizationUrl === "string"
