@@ -201,6 +201,10 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     return json({ ok: true, attachment: await saveUploadedFile(request) }, 200, cors);
   }
 
+  if (pathname === "/api/transcribe" && request.method === "POST") {
+    return json({ ok: true, transcript: await transcribeAudio(request) }, 200, cors);
+  }
+
   if (pathname === "/api/files/view" && request.method === "GET") {
     return json({ ok: true, file: await readReferencedFile(url.searchParams) }, 200, cors);
   }
@@ -379,6 +383,36 @@ async function saveUploadedFile(request: Request): Promise<Record<string, unknow
     name: originalName,
     size: body.length
   };
+}
+
+async function transcribeAudio(request: Request): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY || process.env.CODEX_WEB_UI_OPENAI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required for audio transcription.");
+  }
+  const encodedName = request.headers.get("x-file-name") || "";
+  const originalName = encodedName ? decodeURIComponent(encodedName) : "recording.webm";
+  const body = await readBinaryBody(request, 25 * 1024 * 1024);
+  if (body.length === 0) {
+    throw new Error("Audio recording is empty.");
+  }
+  const form = new FormData();
+  form.set("model", process.env.CODEX_WEB_UI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe");
+  form.set("response_format", "json");
+  form.set("file", new Blob([new Uint8Array(body)], { type: request.headers.get("content-type") || "audio/webm" }), safeUploadName(originalName));
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: form
+  });
+  const result = asRecord(await response.json().catch(() => ({})));
+  if (!response.ok) {
+    const error = asRecord(result.error);
+    throw new Error(typeof error.message === "string" ? error.message : `Transcription failed: ${response.status}`);
+  }
+  return typeof result.text === "string" ? result.text.trim() : "";
 }
 
 async function exploreFiles(searchParams: URLSearchParams): Promise<Record<string, unknown>> {

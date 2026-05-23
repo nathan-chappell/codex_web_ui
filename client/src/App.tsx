@@ -16,6 +16,7 @@ import {
   KeyRound,
   LogOut,
   MessageSquarePlus,
+  Mic,
   Minimize2,
   MoreHorizontal,
   Paperclip,
@@ -89,6 +90,7 @@ import {
   reloadMcpServers,
   respondClientRequest,
   restartServer,
+  transcribeAudio,
   rpc,
   saveMcpServer,
   uploadAttachment
@@ -106,6 +108,7 @@ const defaultSettings: UiSettings = {
 };
 
 type ComposerAction = "send" | "steer";
+type ComposerTriggerMenu = "@" | "$" | "/";
 type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAmendment" | "decline";
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2;
@@ -3918,16 +3921,20 @@ const Composer = memo(function Composer({
   onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
 }) {
   const [uploading, setUploading] = useState(false);
+  const [recordingState, setRecordingState] = useState<"idle" | "recording" | "transcribing">("idle");
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
-  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [triggerMenuOpen, setTriggerMenuOpen] = useState<ComposerTriggerMenu | null>(null);
   const [savedDrafts, setSavedDrafts] = useState<SavedComposerDraft[]>(() => readSavedComposerDrafts());
   const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
   const [draftPasteChoice, setDraftPasteChoice] = useState<SavedComposerDraft | null>(null);
   const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const composerMenuRef = useRef<HTMLDivElement | null>(null);
+  const triggerMenuRef = useRef<HTMLDivElement | null>(null);
   const draftPreviewRef = useRef<HTMLDivElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
   const submittingRef = useRef(false);
@@ -3939,7 +3946,7 @@ const Composer = memo(function Composer({
     lastSubmissionRef.current = null;
     setSubmissionNotice(null);
     setSubmittingAction(null);
-    setComposerMenuOpen(false);
+    setTriggerMenuOpen(null);
     setSendChoiceText(null);
   }, [deliveryKey]);
 
@@ -3961,19 +3968,23 @@ const Composer = memo(function Composer({
   }, [deliveryKey, deliveryVersion, submissionNotice]);
 
   useEffect(() => {
-    if (!composerMenuOpen) {
+    if (!triggerMenuOpen) {
       return;
     }
-    function closeComposerMenuOnOutsidePointer(event: globalThis.PointerEvent) {
+    function closeTriggerMenuOnOutsidePointer(event: globalThis.PointerEvent) {
       const target = event.target;
-      if (target instanceof Node && composerMenuRef.current?.contains(target)) {
+      if (target instanceof Node && triggerMenuRef.current?.contains(target)) {
         return;
       }
-      setComposerMenuOpen(false);
+      setTriggerMenuOpen(null);
     }
-    window.addEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
-    return () => window.removeEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
-  }, [composerMenuOpen]);
+    window.addEventListener("pointerdown", closeTriggerMenuOnOutsidePointer);
+    return () => window.removeEventListener("pointerdown", closeTriggerMenuOnOutsidePointer);
+  }, [triggerMenuOpen]);
+
+  useEffect(() => () => {
+    stopRecordingStream();
+  }, []);
 
   useEffect(() => {
     writeSavedComposerDrafts(savedDrafts);
@@ -4035,6 +4046,16 @@ const Composer = memo(function Composer({
     await submitOrChooseActiveAction(readDraft());
   }
 
+  function handleTextareaInput() {
+    updateDraftPreview();
+    const trigger = currentComposerTrigger();
+    if (trigger) {
+      setTriggerMenuOpen(trigger);
+    } else if (triggerMenuOpen) {
+      setTriggerMenuOpen(null);
+    }
+  }
+
   async function handleAttachmentFile(file: File | undefined) {
     if (!file) {
       return;
@@ -4052,6 +4073,114 @@ const Composer = memo(function Composer({
         fileInputRef.current.value = "";
       }
     }
+  }
+
+  async function toggleRecording() {
+    if (recordingState === "recording") {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    if (recordingState !== "idle") {
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      onError(new Error("Audio recording is not available in this browser."));
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onerror = () => {
+        stopRecordingStream();
+        setRecordingState("idle");
+        onError(new Error("Audio recording failed."));
+      };
+      recorder.onstop = () => {
+        const chunks = recordingChunksRef.current;
+        const type = recorder.mimeType || "audio/webm";
+        stopRecordingStream();
+        if (chunks.length === 0) {
+          setRecordingState("idle");
+          return;
+        }
+        const file = new File(chunks, `composer-recording-${Date.now()}.webm`, { type });
+        setRecordingState("transcribing");
+        void transcribeAudio(file)
+          .then((text) => {
+            if (text) {
+              insertDraftText(text, { block: true });
+            }
+          })
+          .catch(onError)
+          .finally(() => setRecordingState("idle"));
+      };
+      recorder.start();
+      setRecordingState("recording");
+    } catch (error) {
+      stopRecordingStream();
+      setRecordingState("idle");
+      onError(error);
+    }
+  }
+
+  function stopRecordingStream() {
+    mediaRecorderRef.current = null;
+    for (const track of recordingStreamRef.current?.getTracks() ?? []) {
+      track.stop();
+    }
+    recordingStreamRef.current = null;
+  }
+
+  function currentComposerTrigger(): ComposerTriggerMenu | null {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return null;
+    }
+    const cursor = textarea.selectionStart ?? textarea.value.length;
+    const beforeCursor = textarea.value.slice(0, cursor);
+    const match = /(?:^|\s)([@$/])$/.exec(beforeCursor);
+    const value = match?.[1];
+    return value === "@" || value === "$" || value === "/" ? value : null;
+  }
+
+  function openReferenceFile() {
+    setTriggerMenuOpen(null);
+    onReferenceFile((entry) => {
+      insertTriggerSelectionText(markdownFileReference(entry.name, entry.relativePath || entry.path), { block: true });
+    });
+  }
+
+  function openReferenceSkill() {
+    setTriggerMenuOpen(null);
+    onReferenceSkill((skill) => insertTriggerSelectionText(`$${skill.name}`));
+  }
+
+  function insertTriggerSelectionText(value: string, options: { block?: boolean } = {}) {
+    removeCurrentTriggerToken();
+    insertDraftText(value, options);
+  }
+
+  function removeCurrentTriggerToken() {
+    const textarea = textareaRef.current;
+    if (!textarea || !triggerMenuOpen) {
+      return;
+    }
+    const cursor = textarea.selectionStart ?? textarea.value.length;
+    const previous = textarea.value[cursor - 1];
+    if (previous !== triggerMenuOpen) {
+      return;
+    }
+    textarea.setRangeText("", cursor - 1, cursor, "end");
+    updateDraftPreview();
   }
 
   function saveDraftForLater() {
@@ -4174,8 +4303,8 @@ const Composer = memo(function Composer({
             name="message"
             rows={5}
             placeholder="Send a new message or steer the active turn"
-            onInput={updateDraftPreview}
-            onFocus={() => setComposerMenuOpen(false)}
+            onInput={handleTextareaInput}
+            onFocus={() => setTriggerMenuOpen(null)}
             onKeyDown={(event) => void handleTextareaKeyDown(event)}
             onScroll={syncDraftPreviewScroll}
           />
@@ -4189,67 +4318,107 @@ const Composer = memo(function Composer({
               type="file"
               onChange={(event) => void handleAttachmentFile(event.currentTarget.files?.[0])}
             />
-            <div className="composer-overflow" ref={composerMenuRef}>
+            <div className="composer-trigger-tools" ref={triggerMenuRef}>
               <PromptInputButton
                 className="icon-button"
                 type="button"
-                onClick={() => setComposerMenuOpen((open) => !open)}
-                tooltip="More composer actions"
-                aria-label="More composer actions"
-                aria-expanded={composerMenuOpen}
+                disabled={uploading || Boolean(submittingAction)}
+                onClick={() => fileInputRef.current?.click()}
+                tooltip="Attach file"
+                aria-label="Attach file"
               >
-                <MoreHorizontal size={18} />
+                <Paperclip size={17} />
               </PromptInputButton>
-              {composerMenuOpen && (
-                <div className="composer-overflow-menu" role="menu">
-                  <button type="button" role="menuitem" disabled={uploading || Boolean(submittingAction)} onClick={() => {
-                    setComposerMenuOpen(false);
-                    fileInputRef.current?.click();
-                  }}>
-                    <Paperclip size={16} /> Attach file
-                  </button>
-                  <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={() => {
-                    setComposerMenuOpen(false);
-                    onReferenceFile((entry) => {
-                      insertDraftText(markdownFileReference(entry.name, entry.relativePath || entry.path), { block: true });
-                    });
-                  }}>
-                    <AtSign size={16} /> Reference file
-                  </button>
-                  <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={() => {
-                    setComposerMenuOpen(false);
-                    onReferenceSkill((skill) => insertDraftText(`$${skill.name}`));
-                  }}>
-                    <DollarSign size={16} /> Reference skill
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => {
-                    setComposerMenuOpen(false);
-                    setSavedDraftsOpen(true);
-                  }}>
-                    <Save size={16} /> Saved drafts
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => {
-                    setComposerMenuOpen(false);
-                    onFork();
-                  }}>
-                    <GitFork size={16} /> Fork
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => {
-                    setComposerMenuOpen(false);
-                    onCompact();
-                  }}>
-                    <Minimize2 size={16} /> Compact
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => {
-                    setComposerMenuOpen(false);
-                    onArchive();
-                  }}>
-                    <Archive size={16} /> {archiveLabel}
-                  </button>
+              <PromptInputButton
+                className="icon-button"
+                type="button"
+                disabled={Boolean(submittingAction)}
+                onClick={() => setTriggerMenuOpen((open) => open === "@" ? null : "@")}
+                tooltip="Reference file"
+                aria-label="Reference file"
+                aria-expanded={triggerMenuOpen === "@"}
+              >
+                <AtSign size={17} />
+              </PromptInputButton>
+              <PromptInputButton
+                className="icon-button"
+                type="button"
+                disabled={Boolean(submittingAction)}
+                onClick={() => setTriggerMenuOpen((open) => open === "$" ? null : "$")}
+                tooltip="Reference skill"
+                aria-label="Reference skill"
+                aria-expanded={triggerMenuOpen === "$"}
+              >
+                <DollarSign size={17} />
+              </PromptInputButton>
+              <PromptInputButton
+                className="icon-button"
+                type="button"
+                onClick={() => setTriggerMenuOpen((open) => open === "/" ? null : "/")}
+                tooltip="Composer commands"
+                aria-label="Composer commands"
+                aria-expanded={triggerMenuOpen === "/"}
+              >
+                /
+              </PromptInputButton>
+              {triggerMenuOpen && (
+                <div className="composer-trigger-menu" role="menu">
+                  {triggerMenuOpen === "@" && (
+                    <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={openReferenceFile}>
+                      <AtSign size={16} /> Reference file
+                    </button>
+                  )}
+                  {triggerMenuOpen === "$" && (
+                    <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={openReferenceSkill}>
+                      <DollarSign size={16} /> Reference skill
+                    </button>
+                  )}
+                  {triggerMenuOpen === "/" && (
+                    <>
+                      <button type="button" role="menuitem" onClick={() => {
+                        removeCurrentTriggerToken();
+                        setTriggerMenuOpen(null);
+                        setSavedDraftsOpen(true);
+                      }}>
+                        <Save size={16} /> Saved drafts
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => {
+                        removeCurrentTriggerToken();
+                        setTriggerMenuOpen(null);
+                        onFork();
+                      }}>
+                        <GitFork size={16} /> Fork
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => {
+                        removeCurrentTriggerToken();
+                        setTriggerMenuOpen(null);
+                        onCompact();
+                      }}>
+                        <Minimize2 size={16} /> Compact
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => {
+                        removeCurrentTriggerToken();
+                        setTriggerMenuOpen(null);
+                        onArchive();
+                      }}>
+                        <Archive size={16} /> {archiveLabel}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
             <div className="composer-primary-actions">
+              <PromptInputButton
+                className={`icon-button mic-button ${recordingState}`}
+                type="button"
+                disabled={uploading || Boolean(submittingAction) || recordingState === "transcribing"}
+                onClick={() => void toggleRecording()}
+                tooltip={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
+                aria-label={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
+              >
+                <Mic size={17} />
+              </PromptInputButton>
               <PromptInputButton
                 className="icon-button interrupt-button"
                 type="button"

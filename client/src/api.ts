@@ -118,6 +118,20 @@ export async function uploadAttachment(file: File): Promise<UploadedAttachment> 
   return body.attachment;
 }
 
+export async function transcribeAudio(file: File): Promise<string> {
+  const response = await fetch("/api/transcribe", {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": file.type || "audio/webm",
+      "X-File-Name": encodeURIComponent(file.name)
+    },
+    body: file
+  });
+  const body = await parseResponse<{ transcript: string }>(response);
+  return body.transcript;
+}
+
 export async function readReferencedFile(reference: FileReference): Promise<FilePreview> {
   const body = await getJson<{ file: FilePreview }>(fileQueryUrl("/api/files/view", reference));
   return body.file;
