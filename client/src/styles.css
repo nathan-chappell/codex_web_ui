@@ -498,7 +498,7 @@ textarea {
 
 .thread-group {
   display: grid;
-  gap: 4px;
+  gap: 0;
   margin-bottom: 10px;
 }
 
@@ -516,10 +516,15 @@ textarea {
   border-bottom: 0;
   cursor: pointer;
   font-size: 11px;
+  font: inherit;
   text-transform: uppercase;
   font-weight: 850;
   list-style: none;
   user-select: none;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  text-align: left;
 }
 
 .thread-group-heading::-webkit-details-marker {
@@ -536,7 +541,7 @@ textarea {
   transition: transform 160ms ease;
 }
 
-.thread-group[open] .thread-group-heading::before {
+.thread-group.open .thread-group-heading::before {
   transform: rotate(45deg);
 }
 
@@ -551,6 +556,24 @@ textarea {
 .thread-group-heading span {
   color: var(--muted-text);
   font-size: 11px;
+}
+
+.thread-group-content-shell {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  transition: grid-template-rows 190ms ease;
+}
+
+.thread-group.open .thread-group-content-shell {
+  grid-template-rows: 1fr;
+}
+
+.thread-group-content {
+  display: grid;
+  gap: 4px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .session-row {

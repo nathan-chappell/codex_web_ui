@@ -730,34 +730,16 @@ export default function App({ initialThreadId = null }: AppProps) {
               <p className="muted empty-pad">No threads found.</p>
             ) : (
               groupedThreads.map((group) => (
-                <details className="thread-group" key={group.key}>
-                  <summary className="thread-group-heading">
-                    <strong>{group.label}</strong>
-                    <span>{group.threads.length}</span>
-                  </summary>
-                  {group.threads.map((thread) => (
-                    <button
-                      key={thread.id}
-                      type="button"
-                      className={`session-row ${thread.id === selectedThreadId ? "selected" : ""} ${selectedSessionIds.has(thread.id) ? "multi-selected" : ""}`}
-                      aria-pressed={selectedSessionIds.has(thread.id)}
-                      onClick={(event) => handleSessionRowClick(event, thread.id)}
-                      onContextMenu={(event) => event.preventDefault()}
-                      onPointerDown={(event) => startSessionLongPress(event, thread.id)}
-                      onPointerUp={clearSessionLongPress}
-                      onPointerCancel={clearSessionLongPress}
-                      onPointerLeave={clearSessionLongPress}
-                    >
-                      <span className="session-check" aria-hidden="true" />
-                      <strong>{titleForThread(thread)}</strong>
-                      <p>{sessionPreviews[thread.id] || thread.preview || thread.id}</p>
-                      <div className="session-meta-row">
-                        <StatusBadge value={statusType(thread)} />
-                        <span className="muted">{formatDate(thread.updatedAt)}</span>
-                      </div>
-                    </button>
-                  ))}
-                </details>
+                <ThreadProjectGroup
+                  group={group}
+                  key={group.key}
+                  onClearLongPress={clearSessionLongPress}
+                  onRowClick={handleSessionRowClick}
+                  onStartLongPress={startSessionLongPress}
+                  selectedSessionIds={selectedSessionIds}
+                  selectedThreadId={selectedThreadId}
+                  sessionPreviews={sessionPreviews}
+                />
               ))
             )}
             {hasMoreSessions && (
@@ -2234,6 +2216,65 @@ function updateThreadGridSplitVars(element: HTMLElement | null, ratio: number) {
 
 function threadSplitWidthValue(ratio: number): string {
   return `calc(${(ratio * 100).toFixed(2)}% - ${(THREAD_SPLIT_RESIZER_WIDTH * ratio).toFixed(2)}px)`;
+}
+
+function ThreadProjectGroup({
+  group,
+  onClearLongPress,
+  onRowClick,
+  onStartLongPress,
+  selectedSessionIds,
+  selectedThreadId,
+  sessionPreviews
+}: {
+  group: { key: string; label: string; threads: Thread[] };
+  onClearLongPress: () => void;
+  onRowClick: (event: MouseEvent<HTMLButtonElement>, threadId: string) => void;
+  onStartLongPress: (event: PointerEvent<HTMLButtonElement>, threadId: string) => void;
+  selectedSessionIds: Set<string>;
+  selectedThreadId: string | null;
+  sessionPreviews: Record<string, string>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className={`thread-group ${open ? "open" : ""}`}>
+      <button
+        className="thread-group-heading"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <strong>{group.label}</strong>
+        <span>{group.threads.length}</span>
+      </button>
+      <div className="thread-group-content-shell">
+        <div className="thread-group-content">
+          {group.threads.map((thread) => (
+            <button
+              key={thread.id}
+              type="button"
+              className={`session-row ${thread.id === selectedThreadId ? "selected" : ""} ${selectedSessionIds.has(thread.id) ? "multi-selected" : ""}`}
+              aria-pressed={selectedSessionIds.has(thread.id)}
+              onClick={(event) => onRowClick(event, thread.id)}
+              onContextMenu={(event) => event.preventDefault()}
+              onPointerDown={(event) => onStartLongPress(event, thread.id)}
+              onPointerUp={onClearLongPress}
+              onPointerCancel={onClearLongPress}
+              onPointerLeave={onClearLongPress}
+            >
+              <span className="session-check" aria-hidden="true" />
+              <strong>{titleForThread(thread)}</strong>
+              <p>{sessionPreviews[thread.id] || thread.preview || thread.id}</p>
+              <div className="session-meta-row">
+                <StatusBadge value={statusType(thread)} />
+                <span className="muted">{formatDate(thread.updatedAt)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 const ThreadPane = memo(function ThreadPane({
