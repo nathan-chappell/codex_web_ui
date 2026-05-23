@@ -202,6 +202,8 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   const eventSourceRef = useRef<AuthEventStream | null>(null);
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
+  const contextReloadAttemptedThreadIdsRef = useRef<Set<string>>(new Set());
+  const contextReloadInFlightThreadIdsRef = useRef<Set<string>>(new Set());
   const listTimerRef = useRef<number | null>(null);
   const sessionsLoadSeqRef = useRef(0);
   const threadLoadSeqRef = useRef(0);
@@ -1528,7 +1530,7 @@ export default function App({ initialThreadId = null }: AppProps) {
     });
   }
 
-  async function readThread(threadId: string, paneIndex = openThreadIdsRef.current.indexOf(threadId), loadToken?: number): Promise<Thread | null> {
+  async function readThread(threadId: string, paneIndex = openThreadIdsRef.current.indexOf(threadId), loadToken?: number, ensureContextUsage = true): Promise<Thread | null> {
     try {
       const result = await rpc<{ thread: Thread }>("thread/read", { threadId, includeTurns: true });
       const targetPaneIndex = paneIndex >= 0 ? paneIndex : openThreadIdsRef.current.indexOf(threadId);
@@ -1538,6 +1540,9 @@ export default function App({ initialThreadId = null }: AppProps) {
       rememberOpenThread(result.thread, targetPaneIndex, false);
       rememberSessionPreview(result.thread);
       rememberActiveTurn(result.thread);
+      if (ensureContextUsage) {
+        ensureThreadContextUsageLoaded(result.thread, targetPaneIndex, loadToken);
+      }
       return result.thread;
     } catch (error) {
       showToast(error);
@@ -1559,8 +1564,25 @@ export default function App({ initialThreadId = null }: AppProps) {
       scheduleListRefresh(1000);
       return result.thread;
     } catch (error) {
-      return readThread(threadId, paneIndex, loadToken);
+      return readThread(threadId, paneIndex, loadToken, false);
     }
+  }
+
+  function ensureThreadContextUsageLoaded(thread: Thread, paneIndex: number, loadToken?: number) {
+    if (hasMeaningfulThreadTokenUsage(threadTokenUsage(thread)) || hasMeaningfulThreadTokenUsage(threadTokenUsageByIdRef.current[thread.id] ?? null)) {
+      return;
+    }
+    if (!canApplyThreadToPane(thread.id, paneIndex, loadToken)) {
+      return;
+    }
+    if (contextReloadAttemptedThreadIdsRef.current.has(thread.id) || contextReloadInFlightThreadIdsRef.current.has(thread.id)) {
+      return;
+    }
+    contextReloadAttemptedThreadIdsRef.current.add(thread.id);
+    contextReloadInFlightThreadIdsRef.current.add(thread.id);
+    void resumeThread(thread.id, paneIndex, loadToken).finally(() => {
+      contextReloadInFlightThreadIdsRef.current.delete(thread.id);
+    });
   }
 
   async function sendMessageText(selected: Thread, paneIndex: number, text: string, action: ComposerAction = "send"): Promise<boolean> {
@@ -3734,28 +3756,30 @@ const Composer = memo(function Composer({
                 </div>
               )}
             </div>
-            <PromptInputButton
-              className="icon-button interrupt-button"
-              type="button"
-              disabled={!activeTurnId}
-              onClick={onInterrupt}
-              tooltip="Interrupt active turn"
-              aria-label="Interrupt active turn"
-            >
-              <PauseCircle size={17} />
-            </PromptInputButton>
-            <PromptInputButton
-              className="icon-button save-draft-button"
-              type="button"
-              onClick={saveDraftForLater}
-              tooltip="Save draft for later"
-              aria-label="Save draft for later"
-            >
-              <Save size={17} />
-            </PromptInputButton>
-            <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
-              <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
-            </button>
+            <div className="composer-primary-actions">
+              <PromptInputButton
+                className="icon-button interrupt-button"
+                type="button"
+                disabled={!activeTurnId}
+                onClick={onInterrupt}
+                tooltip="Interrupt active turn"
+                aria-label="Interrupt active turn"
+              >
+                <PauseCircle size={17} />
+              </PromptInputButton>
+              <PromptInputButton
+                className="icon-button save-draft-button"
+                type="button"
+                onClick={saveDraftForLater}
+                tooltip="Save draft for later"
+                aria-label="Save draft for later"
+              >
+                <Save size={17} />
+              </PromptInputButton>
+              <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
+                <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
+              </button>
+            </div>
           </PromptInputTools>
         </PromptInputFooter>
       </PromptInputBody>
@@ -4785,6 +4809,13 @@ function mergeThreadTokenUsage(next: ThreadTokenUsage | null, previous: ThreadTo
     };
   }
   return next;
+}
+
+function hasMeaningfulThreadTokenUsage(usage: ThreadTokenUsage | null): boolean {
+  if (!usage) {
+    return false;
+  }
+  return Math.max(usage.total.totalTokens, usage.last.totalTokens) > 0;
 }
 
 function sameThreadTokenUsage(a: ThreadTokenUsage | null, b: ThreadTokenUsage | null): boolean {

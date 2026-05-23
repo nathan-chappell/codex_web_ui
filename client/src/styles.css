@@ -1449,6 +1449,7 @@ textarea {
 .composer-actions {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   width: 100%;
   gap: 8px;
   flex-wrap: wrap;
@@ -1461,6 +1462,15 @@ textarea {
 
 .composer-overflow-menu {
   bottom: calc(100% + 8px);
+}
+
+.composer-primary-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .file-input {
@@ -2864,12 +2874,17 @@ textarea {
 
   .composer-actions {
     display: flex;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     flex-wrap: nowrap;
-    justify-content: flex-start;
+    justify-content: space-between;
     overflow: visible;
     overscroll-behavior-x: contain;
     gap: 8px;
+  }
+
+  .composer-primary-actions {
+    margin-left: auto;
+    flex: 0 0 auto;
   }
 
   .composer-actions button {
