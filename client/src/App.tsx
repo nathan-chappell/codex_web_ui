@@ -79,6 +79,7 @@ import {
   getClientRequests,
   getMcpServers,
   getStatus,
+  loginMcpServer,
   listSkills,
   login,
   logout,
@@ -395,6 +396,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const handleOpenFileReference = useStableCallback((reference: FileReference) => openFileReference(reference));
   const handleReferenceFile = useStableCallback((onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => openFileExplorerForReference(onSelect));
   const handleReferenceSkill = useStableCallback((onSelect: (skill: SkillReference) => void) => openSkillSelector(onSelect));
+  const handleLoginMcpServer = useStableCallback((name: string) => loginMcpServerFromUi(name));
   const handlePaneError = useStableCallback((error: unknown) => showToast(error));
   const handleRespondClientRequest = useStableCallback((request: ClientRequest, decision: ApprovalDecision) => respondToClientRequest(request, decision));
   useEffect(() => {
@@ -860,6 +862,7 @@ export default function App({ initialThreadId = null }: AppProps) {
           onClose={() => setStatusOpen(false)}
           onRecover={recoverAppServerFromUi}
           onRefreshMcp={reloadMcpServerStatus}
+          onLoginMcpServer={handleLoginMcpServer}
           statusRefreshing={statusRefreshing}
           onRefresh={refreshStatus}
           onSaveMcpServer={saveMcpServerFromUi}
@@ -1310,7 +1313,7 @@ export default function App({ initialThreadId = null }: AppProps) {
     }
   }
 
-  async function saveMcpServerFromUi(input: { name: string; url: string; bearerToken?: string }) {
+  async function saveMcpServerFromUi(input: { name: string; url: string }) {
     setMcpLoading(true);
     try {
       setMcpServers(await saveMcpServer(input));
@@ -1320,6 +1323,17 @@ export default function App({ initialThreadId = null }: AppProps) {
       throw error;
     } finally {
       setMcpLoading(false);
+    }
+  }
+
+  async function loginMcpServerFromUi(name: string): Promise<string> {
+    try {
+      const result = await loginMcpServer(name);
+      showToast(`Opening OAuth login for ${name}`);
+      return result.authorizationUrl;
+    } catch (error) {
+      showToast(error);
+      throw error;
     }
   }
 
@@ -1822,6 +1836,14 @@ export default function App({ initialThreadId = null }: AppProps) {
     const threadId = typeof params.threadId === "string" ? params.threadId : threadIdFromThread(params.thread);
 
     if (method === "mcpServer/status/updated") {
+      void loadMcpServerStatus();
+      return;
+    }
+    if (method === "mcpServer/oauthLogin/completed") {
+      const name = typeof params.name === "string" ? params.name : "MCP server";
+      const success = params.success === true;
+      const error = typeof params.error === "string" ? params.error : "";
+      showToast(success ? `${name} OAuth login completed` : `${name} OAuth login failed${error ? `: ${error}` : ""}`);
       void loadMcpServerStatus();
       return;
     }
@@ -2465,6 +2487,7 @@ function StatusModal({
   status,
   statusRefreshing,
   onClose,
+  onLoginMcpServer,
   onRecover,
   onRefresh,
   onRefreshMcp,
@@ -2477,15 +2500,17 @@ function StatusModal({
   status: ServerStatus;
   statusRefreshing: boolean;
   onClose: () => void;
+  onLoginMcpServer: (name: string) => Promise<string>;
   onRecover: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onRefreshMcp: () => Promise<void>;
-  onSaveMcpServer: (input: { name: string; url: string; bearerToken?: string }) => Promise<void>;
+  onSaveMcpServer: (input: { name: string; url: string }) => Promise<void>;
 }) {
   const socket = typeof status.config?.appServerSocketPath === "string" ? status.config.appServerSocketPath : "stdio / owned";
   const [serverName, setServerName] = useState("agro-ontology");
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:3000/api/mcp");
-  const [bearerToken, setBearerToken] = useState("");
+  const [oauthLoginServer, setOauthLoginServer] = useState<string | null>(null);
+  const [oauthFallback, setOauthFallback] = useState<{ name: string; url: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function handleSaveMcpServer(event: FormEvent) {
@@ -2494,12 +2519,28 @@ function StatusModal({
     try {
       await onSaveMcpServer({
         name: serverName,
-        url: serverUrl,
-        ...(bearerToken.trim() ? { bearerToken } : {})
+        url: serverUrl
       });
-      setBearerToken("");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleMcpOAuthLogin(name: string) {
+    const popup = window.open("", `codex-mcp-oauth-${name}`, "popup,width=560,height=760");
+    setOauthLoginServer(name);
+    try {
+      const authorizationUrl = await onLoginMcpServer(name);
+      if (popup) {
+        popup.location.href = authorizationUrl;
+      } else {
+        setOauthFallback({ name, url: authorizationUrl });
+      }
+    } catch (error) {
+      popup?.close();
+      throw error;
+    } finally {
+      setOauthLoginServer(null);
     }
   }
 
@@ -2536,7 +2577,14 @@ function StatusModal({
           </header>
           <div className="mcp-server-list">
             {mcpServers?.servers.length ? (
-              mcpServers.servers.map((server) => <McpServerCard key={server.name} server={server} />)
+              mcpServers.servers.map((server) => (
+                <McpServerCard
+                  key={server.name}
+                  loginPending={oauthLoginServer === server.name}
+                  onLogin={() => void handleMcpOAuthLogin(server.name)}
+                  server={server}
+                />
+              ))
             ) : (
               <div className="empty-state inline">
                 <h2>{mcpLoading ? "Loading MCP servers" : "No MCP servers"}</h2>
@@ -2553,15 +2601,22 @@ function StatusModal({
               <span>URL</span>
               <input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="http://127.0.0.1:3000/api/mcp" />
             </label>
-            <label className="field bearer-token-field">
-              <span>Bearer token</span>
-              <input value={bearerToken} onChange={(event) => setBearerToken(event.target.value)} type="password" placeholder="Optional; blank preserves existing token" />
-            </label>
             <button className="primary-button" type="submit" disabled={saving || mcpLoading}>
-              <KeyRound size={16} /> Save MCP
+              <Plug size={16} /> Save MCP
             </button>
           </form>
         </section>
+        {oauthFallback && (
+          <section className="status-section oauth-fallback-panel">
+            <div>
+              <h3>OAuth login</h3>
+              <p className="muted">Popup blocked for {oauthFallback.name}. Open the login page manually.</p>
+            </div>
+            <a className="primary-button" href={oauthFallback.url} target="_blank" rel="noreferrer" onClick={() => setOauthFallback(null)}>
+              <KeyRound size={16} /> Open login
+            </a>
+          </section>
+        )}
         <p className="muted">Rate limits use the app-server account quota snapshot. Recover checks the sidecar PID and socket, then reconnects this UI.</p>
         <footer className="modal-actions">
           <button className="secondary-button" type="button" onClick={() => void onRecover()}>
@@ -2576,8 +2631,17 @@ function StatusModal({
   );
 }
 
-function McpServerCard({ server }: { server: McpServerStatus }) {
-  const authLabel = server.authStatus === "bearerToken" ? "token" : server.authStatus;
+function McpServerCard({
+  loginPending,
+  onLogin,
+  server
+}: {
+  loginPending: boolean;
+  onLogin: () => void;
+  server: McpServerStatus;
+}) {
+  const needsLogin = server.authStatus === "notLoggedIn";
+  const authLabel = mcpAuthStatusLabel(server.authStatus);
   return (
     <article className="mcp-server-card">
       <div className="mcp-server-card-header">
@@ -2585,6 +2649,11 @@ function McpServerCard({ server }: { server: McpServerStatus }) {
         <span>{authLabel}</span>
       </div>
       <p>{server.tools.length} tools{server.resources || server.resourceTemplates ? `, ${server.resources + server.resourceTemplates} resources` : ""}</p>
+      {needsLogin && (
+        <button className="secondary-button" type="button" onClick={onLogin} disabled={loginPending}>
+          <KeyRound size={16} className={loginPending ? "spin-icon" : ""} /> {loginPending ? "Opening" : "Log in"}
+        </button>
+      )}
       {server.tools.length > 0 && (
         <div className="mcp-tool-list">
           {server.tools.map((tool) => <code key={tool}>{tool}</code>)}
@@ -2592,6 +2661,14 @@ function McpServerCard({ server }: { server: McpServerStatus }) {
       )}
     </article>
   );
+}
+
+function mcpAuthStatusLabel(status: string): string {
+  if (status === "bearerToken") return "token";
+  if (status === "notLoggedIn") return "login required";
+  if (status === "oAuth") return "oauth";
+  if (status === "unsupported") return "unsupported";
+  return status || "unknown";
 }
 
 function StatusDetail({ label, value }: { label: string; value: ReactNode }) {

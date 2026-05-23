@@ -141,15 +141,29 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
 
   if (pathname === "/api/mcp/servers" && request.method === "POST") {
     const body = await readJsonBody(request);
-    const bearerToken = Object.prototype.hasOwnProperty.call(body, "bearerToken")
-      ? (typeof body.bearerToken === "string" ? body.bearerToken : null)
-      : undefined;
     await saveMcpServerConfig({
       name: body.name as string,
-      url: body.url as string,
-      bearerToken
+      url: body.url as string
     });
     return json({ ok: true, mcp: await reloadMcpServers() }, 200, cors);
+  }
+
+  if (pathname === "/api/mcp/servers/oauth/login" && request.method === "POST") {
+    const body = await readJsonBody(request);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) {
+      return json({ ok: false, error: "Missing MCP server name" }, 400, cors);
+    }
+    const result = asRecord(await bridge.request("mcpServer/oauth/login", { server: name }));
+    const authorizationUrl = typeof result.authorization_url === "string"
+      ? result.authorization_url
+      : typeof result.authorizationUrl === "string"
+        ? result.authorizationUrl
+        : "";
+    if (!authorizationUrl) {
+      return json({ ok: false, error: "Codex did not return an MCP OAuth authorization URL" }, 502, cors);
+    }
+    return json({ ok: true, authorizationUrl }, 200, cors);
   }
 
   if (pathname === "/api/mcp/servers/reload" && request.method === "POST") {

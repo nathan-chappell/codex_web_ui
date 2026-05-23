@@ -2354,17 +2354,21 @@ textarea {
 
 .mcp-server-form {
   display: grid;
-  grid-template-columns: minmax(120px, 0.7fr) minmax(220px, 1.3fr);
+  grid-template-columns: minmax(120px, 0.7fr) minmax(220px, 1.3fr) auto;
   gap: 10px;
   align-items: end;
 }
 
-.mcp-server-form .bearer-token-field {
-  grid-column: 1 / -1;
-}
-
 .mcp-server-form .primary-button {
   justify-self: start;
+}
+
+.oauth-fallback-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 
 .form-grid {

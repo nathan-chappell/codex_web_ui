@@ -49,16 +49,17 @@ export async function getMcpServers(): Promise<McpServerList> {
   return body.mcp;
 }
 
-export async function saveMcpServer(input: { name: string; url: string; bearerToken?: string }): Promise<McpServerList> {
-  const payload: { name: string; url: string; bearerToken?: string } = {
+export async function saveMcpServer(input: { name: string; url: string }): Promise<McpServerList> {
+  const payload: { name: string; url: string } = {
     name: input.name,
     url: input.url
   };
-  if (input.bearerToken?.trim()) {
-    payload.bearerToken = input.bearerToken.trim();
-  }
   const body = await postJson<{ mcp: McpServerList }>("/api/mcp/servers", payload);
   return body.mcp;
+}
+
+export async function loginMcpServer(name: string): Promise<{ authorizationUrl: string }> {
+  return postJson<{ authorizationUrl: string }>("/api/mcp/servers/oauth/login", { name });
 }
 
 export async function reloadMcpServers(): Promise<McpServerList> {

@@ -5,7 +5,6 @@ import { homeDir } from "./runtime";
 export interface McpServerInput {
   name: string;
   url: string;
-  bearerToken?: string | null;
 }
 
 export function codexConfigPath(): string {
@@ -25,15 +24,10 @@ export async function saveMcpServerConfig(input: McpServerInput): Promise<{ conf
     }
     throw error;
   });
-  const { text, block } = removeMcpServerBlock(existing, name);
-  const preservedHeader = input.bearerToken === undefined ? existingHttpHeadersLine(block) : null;
-  const headerLine = input.bearerToken?.trim()
-    ? `http_headers = { "Authorization" = "Bearer ${tomlInlineStringValue(input.bearerToken.trim())}" }`
-    : preservedHeader;
+  const { text } = removeMcpServerBlock(existing, name);
   const nextBlock = [
     `[mcp_servers.${name}]`,
-    `url = "${tomlStringValue(url)}"`,
-    ...(headerLine ? [headerLine] : [])
+    `url = "${tomlStringValue(url)}"`
   ].join("\n");
   const nextText = `${text.trimEnd()}${text.trimEnd() ? "\n\n" : ""}${nextBlock}\n`;
   await mkdir(path.dirname(configPath), { recursive: true });
@@ -100,17 +94,6 @@ function tableName(line: string): string {
   return line.trim().replace(/^\[|\]$/g, "").replace(/"([^"]+)"/g, "$1");
 }
 
-function existingHttpHeadersLine(block: string | null): string | null {
-  if (!block) {
-    return null;
-  }
-  return block.split(/\r?\n/).find((line) => /^\s*http_headers\s*=/.test(line))?.trim() ?? null;
-}
-
 function tomlStringValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function tomlInlineStringValue(value: string): string {
-  return tomlStringValue(value).replace(/\r?\n/g, " ");
 }
