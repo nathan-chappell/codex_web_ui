@@ -22,7 +22,9 @@ export function mcpOAuthCallbackPort(): number {
 }
 
 export function mcpOAuthCallbackBaseUrl(request: Request): string {
-  return `${publicOrigin(request)}${CALLBACK_BASE_PATH}`;
+  const origin = publicOrigin(request);
+  ensureOAuthRedirectOriginAllowed(origin);
+  return `${origin}${CALLBACK_BASE_PATH}`;
 }
 
 export function registerMcpOAuthCallback(serverName: string, authorizationUrl: string): void {
@@ -118,6 +120,27 @@ function publicOrigin(request: Request): string {
   const protocol = request.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
   const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || requestUrl.host;
   return `${protocol}://${host}`;
+}
+
+function ensureOAuthRedirectOriginAllowed(origin: string): void {
+  const url = new URL(origin);
+  if (url.protocol === "https:") {
+    return;
+  }
+  if (url.protocol === "http:" && isLocalOAuthHost(url.hostname)) {
+    return;
+  }
+  const error = new Error(
+    "MCP OAuth requires an HTTPS Web UI origin for remote or LAN browsers. " +
+    "Open the UI through an HTTPS tunnel/reverse proxy, or set CODEX_WEB_UI_PUBLIC_ORIGIN to that HTTPS origin."
+  ) as Error & { statusCode?: number };
+  error.statusCode = 400;
+  throw error;
+}
+
+function isLocalOAuthHost(hostname: string): boolean {
+  const value = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return value === "localhost" || value.endsWith(".localhost") || value === "::1" || value.startsWith("127.");
 }
 
 function callbackKey(pathname: string, state: string): string {

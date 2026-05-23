@@ -110,6 +110,12 @@ type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAme
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2;
 type ThreadPermissionOverride = Pick<UiSettings, "approvalPolicy" | "sandbox">;
+type ToastState = {
+  message: string;
+  tone: "info" | "error";
+  actionLabel?: string;
+  onAction?: () => void;
+};
 type SavedComposerDraft = {
   id: string;
   savedAt: number;
@@ -174,7 +180,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [mobilePane, setMobilePane] = useState<MobilePane>(() => initialStoredLayout.mobilePane ?? "sessions");
   const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(() => initialStoredLayout.threadPaneCount ?? 1);
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [threadActionsOpen, setThreadActionsOpen] = useState(false);
@@ -205,6 +211,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [mcpLoading, setMcpLoading] = useState(false);
 
   const eventSourceRef = useRef<AuthEventStream | null>(null);
+  const recentOAuthFailureToastRef = useRef<Map<string, number>>(new Map());
   const refreshTimersRef = useRef<Map<string, number>>(new Map());
   const contextReloadAttemptedThreadIdsRef = useRef<Set<string>>(new Set());
   const contextReloadInFlightThreadIdsRef = useRef<Set<string>>(new Set());
@@ -904,7 +911,16 @@ export default function App({ initialThreadId = null }: AppProps) {
           }}
         />
       )}
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className={`toast ${toast.tone}`}>
+          <span>{toast.message}</span>
+          {toast.actionLabel && toast.onAction && (
+            <button type="button" onClick={toast.onAction}>
+              {toast.actionLabel}
+            </button>
+          )}
+        </div>
+      )}
     </main>
   );
 
@@ -1843,7 +1859,18 @@ export default function App({ initialThreadId = null }: AppProps) {
       const name = typeof params.name === "string" ? params.name : "MCP server";
       const success = params.success === true;
       const error = typeof params.error === "string" ? params.error : "";
-      showToast(success ? `${name} OAuth login completed` : `${name} OAuth login failed${error ? `: ${error}` : ""}`);
+      if (success) {
+        showToast(`${name} OAuth login completed`);
+      } else if (shouldShowOAuthFailureToast(name, error)) {
+        showToast(
+          `${name} needs MCP login${error ? `: ${friendlyOAuthError(error)}` : ""}`,
+          {
+            tone: "error",
+            actionLabel: "Open status",
+            onAction: () => setStatusOpen(true)
+          }
+        );
+      }
       void loadMcpServerStatus();
       return;
     }
@@ -2061,9 +2088,28 @@ export default function App({ initialThreadId = null }: AppProps) {
     return override ? { ...settings, ...override } : settings;
   }
 
-  function showToast(error: unknown) {
-    setToast(messageFromError(error));
-    window.setTimeout(() => setToast(""), 4200);
+  function showToast(error: unknown, options: Partial<ToastState> = {}) {
+    const message = messageFromError(error);
+    const tone = options.tone ?? (error instanceof Error || looksLikeErrorMessage(message) ? "error" : "info");
+    const toastState: ToastState = {
+      message,
+      tone,
+      actionLabel: options.actionLabel,
+      onAction: options.onAction
+    };
+    setToast(toastState);
+    window.setTimeout(() => {
+      setToast((current) => current === toastState ? null : current);
+    }, tone === "error" ? 7000 : 4200);
+  }
+
+  function shouldShowOAuthFailureToast(name: string, error: string): boolean {
+    const normalizedError = friendlyOAuthError(error);
+    const key = `${name}\n${normalizedError}`;
+    const now = Date.now();
+    const previous = recentOAuthFailureToastRef.current.get(key) ?? 0;
+    recentOAuthFailureToastRef.current.set(key, now);
+    return now - previous > 20_000;
   }
 
   function switchMobilePane(direction: 1 | -1) {
@@ -2515,6 +2561,7 @@ function StatusModal({
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:3000/api/mcp");
   const [oauthLoginServer, setOauthLoginServer] = useState<string | null>(null);
   const [oauthFallback, setOauthFallback] = useState<{ name: string; url: string } | null>(null);
+  const [oauthError, setOauthError] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function handleSaveMcpServer(event: FormEvent) {
@@ -2533,6 +2580,7 @@ function StatusModal({
   async function handleMcpOAuthLogin(name: string) {
     const popup = window.open("", `codex-mcp-oauth-${name}`, "popup,width=560,height=760");
     setOauthLoginServer(name);
+    setOauthError("");
     try {
       const authorizationUrl = await onLoginMcpServer(name);
       if (popup) {
@@ -2542,6 +2590,7 @@ function StatusModal({
       }
     } catch (error) {
       popup?.close();
+      setOauthError(messageFromError(error));
       throw error;
     } finally {
       setOauthLoginServer(null);
@@ -2619,6 +2668,14 @@ function StatusModal({
             <a className="primary-button" href={oauthFallback.url} target="_blank" rel="noreferrer" onClick={() => setOauthFallback(null)}>
               <KeyRound size={16} /> Open login
             </a>
+          </section>
+        )}
+        {oauthError && (
+          <section className="status-section oauth-error-panel">
+            <div>
+              <h3>OAuth login needs attention</h3>
+              <p>{oauthError}</p>
+            </div>
           </section>
         )}
         <p className="muted">Rate limits use the app-server account quota snapshot. Recover checks the sidecar PID and socket, then reconnects this UI.</p>
@@ -5176,4 +5233,21 @@ function exitText(value: unknown): string {
 
 function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function looksLikeErrorMessage(message: string): boolean {
+  return /\b(error|failed|invalid|unauthorized|forbidden|expired|timed out|requires)\b/i.test(message);
+}
+
+function friendlyOAuthError(error: string): string {
+  if (/insecure protocol|https|http is only allowed/i.test(error)) {
+    return "open the Web UI through HTTPS, then try login again";
+  }
+  if (/invalid_grant/i.test(error)) {
+    return "the OAuth callback was already used or expired; try logging in again";
+  }
+  if (/timed out/i.test(error)) {
+    return "the OAuth callback was not received in time; try logging in again";
+  }
+  return error;
 }

@@ -2371,6 +2371,20 @@ textarea {
   align-items: center;
 }
 
+.oauth-error-panel {
+  border: 1px solid #f0b8b8;
+  border-radius: 8px;
+  background: #fff4f4;
+  color: #7b1f1f;
+  padding: 10px;
+}
+
+.oauth-error-panel p {
+  margin: 0;
+  color: #7b1f1f;
+  font-size: 13px;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2488,12 +2502,34 @@ textarea {
   right: 18px;
   bottom: 18px;
   width: min(420px, calc(100vw - 36px));
-  background: #11191d;
-  color: #f4f7f8;
+  background: #f6f6f6;
+  color: #11191d;
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px 14px;
   box-shadow: var(--shadow);
   z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toast.error {
+  background: #fff4f4;
+  border-color: #f0b8b8;
+  color: #7b1f1f;
+}
+
+.toast button {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 5px 9px;
+  white-space: nowrap;
 }
 
 .empty-pad {

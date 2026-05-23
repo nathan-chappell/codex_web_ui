@@ -194,8 +194,10 @@ mcp_oauth_callback_url = "http://<web-ui-origin>/api/mcp/oauth/callback"
 
 The callback route keeps valid callback path/state pairs in memory, forwards a
 matching callback once to Codex's local listener, and rejects expired, unknown,
-or repeated callbacks. Behind a reverse proxy, set `CODEX_WEB_UI_PUBLIC_ORIGIN`
-if `X-Forwarded-Proto` and `X-Forwarded-Host` are not enough to reconstruct the
+or repeated callbacks. OAuth providers generally reject plain HTTP redirects
+except for localhost, so remote or LAN OAuth login requires an HTTPS Web UI
+origin. Behind a reverse proxy, set `CODEX_WEB_UI_PUBLIC_ORIGIN` if
+`X-Forwarded-Proto` and `X-Forwarded-Host` are not enough to reconstruct the
 public origin. Set `CODEX_WEB_UI_MCP_OAUTH_CALLBACK_PORT` to change the local
 Codex callback listener port.
 
