@@ -35,6 +35,7 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { Fragment, FormEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -4558,6 +4559,20 @@ function AudioLevelMeter({ levels }: { levels: number[] }) {
   );
 }
 
+function ViewportModalBackdrop({ children }: { children: ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return null;
+  }
+
+  return createPortal(<div className="modal-backdrop">{children}</div>, document.body);
+}
+
 function calculateWaveformLevels(data: Uint8Array<ArrayBuffer>, barCount: number): number[] {
   const chunkSize = Math.max(1, Math.floor(data.length / barCount));
   return Array.from({ length: barCount }, (_, index) => {
@@ -4588,7 +4603,7 @@ function SendChoiceModal({
   onSteer: () => void;
 }) {
   return (
-    <div className="modal-backdrop">
+    <ViewportModalBackdrop>
       <section className="modal send-choice-modal" role="dialog" aria-modal="true" aria-labelledby="send-choice-title">
         <header className="modal-header">
           <div>
@@ -4608,7 +4623,7 @@ function SendChoiceModal({
           </button>
         </div>
       </section>
-    </div>
+    </ViewportModalBackdrop>
   );
 }
 
@@ -4624,7 +4639,7 @@ function SavedDraftsModal({
   onUse: (draft: SavedComposerDraft) => void;
 }) {
   return (
-    <div className="modal-backdrop">
+    <ViewportModalBackdrop>
       <section className="modal saved-drafts-modal" role="dialog" aria-modal="true" aria-labelledby="saved-drafts-title">
         <header className="modal-header">
           <div>
@@ -4656,7 +4671,7 @@ function SavedDraftsModal({
           </div>
         )}
       </section>
-    </div>
+    </ViewportModalBackdrop>
   );
 }
 
@@ -4672,7 +4687,7 @@ function SavedDraftPasteChoiceModal({
   onOverwrite: () => void;
 }) {
   return (
-    <div className="modal-backdrop">
+    <ViewportModalBackdrop>
       <section className="modal saved-draft-choice-modal" role="dialog" aria-modal="true" aria-labelledby="saved-draft-choice-title">
         <header className="modal-header">
           <div>
@@ -4692,7 +4707,7 @@ function SavedDraftPasteChoiceModal({
           </button>
         </div>
       </section>
-    </div>
+    </ViewportModalBackdrop>
   );
 }
 
