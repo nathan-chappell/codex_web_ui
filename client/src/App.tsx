@@ -17,7 +17,6 @@ import {
   LogOut,
   MessageSquarePlus,
   Mic,
-  Minimize2,
   MoreHorizontal,
   Paperclip,
   PauseCircle,
@@ -28,6 +27,7 @@ import {
   Save,
   Search,
   Send,
+  Settings,
   Trash2,
   X
 } from "lucide-react";
@@ -109,18 +109,15 @@ const defaultSettings: UiSettings = {
   sandbox: "workspace-write"
 };
 
-const slashComposerCommands = [
+const codexSlashCommands = [
   { command: "/help", description: "Show available Codex commands" },
+  { command: "/plan", description: "Ask Codex to make or update a plan" },
   { command: "/status", description: "Show session status and usage" },
   { command: "/compact", description: "Compact conversation context" },
   { command: "/review", description: "Run a focused code review" },
-  { command: "/model", description: "Switch model", needsArgument: true },
-  { command: "/approval", description: "Change approval mode", needsArgument: true },
-  { command: "/sandbox", description: "Change sandbox mode", needsArgument: true },
   { command: "/use", description: "Load a skill", needsArgument: true },
   { command: "/clear", description: "Clear conversation history" },
-  { command: "/reset", description: "Reset session state" },
-  { command: "/apps", description: "Manage app connectors" }
+  { command: "/init", description: "Initialize project instructions" }
 ] as const;
 
 type ComposerAction = "send" | "steer";
@@ -208,6 +205,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [statusRefreshing, setStatusRefreshing] = useState(false);
   const [settings, setSettings] = useState<UiSettings>({ ...defaultSettings });
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [activeTurns, setActiveTurns] = useState<Record<string, string>>({});
   const [threadTokenUsageById, setThreadTokenUsageById] = useState<Record<string, ThreadTokenUsage>>({});
@@ -451,7 +449,6 @@ export default function App({ initialThreadId = null }: AppProps) {
   const selectionActive = selectedSessionIds.size > 0;
   const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
   const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
-  const handleCompactPaneThread = useStableCallback((thread: Thread) => compactThread(thread));
   const handleForkPaneThread = useStableCallback((thread: Thread, paneIndex: number) => forkThread(thread, paneIndex));
   const handleInterruptPaneThread = useStableCallback((thread: Thread) => interruptThread(thread));
   const handleRenamePaneThread = useStableCallback((thread: Thread, name: string) => renameThread(thread, name));
@@ -462,6 +459,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const handleLoginMcpServer = useStableCallback((name: string) => loginMcpServerFromUi(name));
   const handlePaneError = useStableCallback((error: unknown) => showToast(error));
   const handleRespondClientRequest = useStableCallback((request: ClientRequest, decision: ApprovalDecision) => respondToClientRequest(request, decision));
+  const handleOpenSettings = useStableCallback(() => setSettingsOpen(true));
   useEffect(() => {
     const nextOpenThreadIds = Array.from({ length: threadPaneCount }, (_, index) => openThreadIdsRef.current[index] ?? null);
     openThreadIdsRef.current = nextOpenThreadIds;
@@ -856,12 +854,12 @@ export default function App({ initialThreadId = null }: AppProps) {
                     isLoading={isLoadingThread}
                     onActivatePane={handleActivatePane}
                     onArchiveThread={handleArchivePaneThread}
-                    onCompactThread={handleCompactPaneThread}
                     onForkThread={handleForkPaneThread}
                     onInterruptThread={handleInterruptPaneThread}
                     onRenameThread={handleRenamePaneThread}
                     onError={handlePaneError}
                     onOpenFile={handleOpenFileReference}
+                    onOpenSettings={handleOpenSettings}
                     onReferenceFile={handleReferenceFile}
                     onReferenceSkill={handleReferenceSkill}
                     onSendMessage={handleSendPaneMessage}
@@ -895,6 +893,18 @@ export default function App({ initialThreadId = null }: AppProps) {
           onClose={() => setNewSessionOpen(false)}
           onSubmit={createSession}
           includePrompt
+        />
+      )}
+      {settingsOpen && (
+        <SessionModal
+          title="Settings"
+          settings={settings}
+          permissionPolicy={authInfo?.permissionPolicy}
+          onClose={() => setSettingsOpen(false)}
+          onSubmit={({ settings: nextSettings }) => {
+            setSettings(nextSettings);
+            setSettingsOpen(false);
+          }}
         />
       )}
       {statusOpen && (
@@ -1795,18 +1805,6 @@ export default function App({ initialThreadId = null }: AppProps) {
     }
   }
 
-  async function compactThread(thread: Thread) {
-    if (!window.confirm("Start context compaction for this thread?")) {
-      return;
-    }
-    try {
-      await rpc("thread/compact/start", { threadId: thread.id });
-      showToast("Compaction started");
-    } catch (error) {
-      showToast(error);
-    }
-  }
-
   async function archiveThread(thread: Thread, paneIndex = activePaneIndex) {
     try {
       if (showArchived) {
@@ -2303,12 +2301,12 @@ const ThreadPane = memo(function ThreadPane({
   isLoading,
   onActivatePane,
   onArchiveThread,
-  onCompactThread,
   onForkThread,
   onInterruptThread,
   onRenameThread,
   onError,
   onOpenFile,
+  onOpenSettings,
   onReferenceFile,
   onReferenceSkill,
   onSendMessage,
@@ -2322,12 +2320,12 @@ const ThreadPane = memo(function ThreadPane({
   isLoading: boolean;
   onActivatePane: (paneIndex: number) => void;
   onArchiveThread: (thread: Thread, paneIndex: number) => void;
-  onCompactThread: (thread: Thread) => void;
   onForkThread: (thread: Thread, paneIndex: number) => void;
   onInterruptThread: (thread: Thread) => void;
   onRenameThread: (thread: Thread, name: string) => Promise<void>;
   onError: (error: unknown) => void;
   onOpenFile: (reference: FileReference) => Promise<void>;
+  onOpenSettings: () => void;
   onReferenceFile: (onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => void;
   onReferenceSkill: (onSelect: (skill: SkillReference) => void) => void;
   onSendMessage: (thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => Promise<boolean>;
@@ -2574,13 +2572,13 @@ const ThreadPane = memo(function ThreadPane({
             onInterrupt={() => onInterruptThread(thread)}
             onSend={(text, action) => onSendMessage(thread, paneIndex, text, action)}
             onFork={() => onForkThread(thread, paneIndex)}
-            onCompact={() => onCompactThread(thread)}
             onArchive={() => onArchiveThread(thread, paneIndex)}
             archiveLabel={archiveLabel}
             collapsed={composerCollapsed}
             contextUsage={contextUsage}
             onError={onError}
             onCollapsedChange={handleComposerCollapsedChange}
+            onOpenSettings={onOpenSettings}
             onReferenceFile={onReferenceFile}
             onReferenceSkill={onReferenceSkill}
           />
@@ -3954,11 +3952,11 @@ const Composer = memo(function Composer({
   deliveryKey,
   deliveryVersion,
   onArchive,
-  onCompact,
   onCollapsedChange,
   onError,
   onFork,
   onInterrupt,
+  onOpenSettings,
   onReferenceFile,
   onReferenceSkill,
   onSend
@@ -3970,11 +3968,11 @@ const Composer = memo(function Composer({
   deliveryKey: string;
   deliveryVersion: number;
   onArchive: () => void;
-  onCompact: () => void;
   onCollapsedChange: (collapsed: boolean) => void;
   onError: (error: unknown) => void;
   onFork: () => void;
   onInterrupt: () => void;
+  onOpenSettings: () => void;
   onReferenceFile: (onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => void;
   onReferenceSkill: (onSelect: (skill: SkillReference) => void) => void;
   onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
@@ -4185,10 +4183,16 @@ const Composer = memo(function Composer({
     onReferenceSkill((skill) => insertTriggerSelectionText(`$${skill.name}`));
   }
 
-  function insertSlashCommand(command: typeof slashComposerCommands[number]) {
+  function insertSlashCommand(command: typeof codexSlashCommands[number]) {
     removeCurrentTriggerToken(triggerMenuOpen);
     setTriggerMenuOpen(null);
     insertDraftText(`${command.command}${"needsArgument" in command && command.needsArgument ? " " : ""}`);
+  }
+
+  function runSlashMenuAction(action: () => void) {
+    removeCurrentTriggerToken(triggerMenuOpen);
+    setTriggerMenuOpen(null);
+    action();
   }
 
   function insertTriggerSelectionText(value: string, options: { block?: boolean } = {}) {
@@ -4324,7 +4328,8 @@ const Composer = memo(function Composer({
                   )}
                   {triggerMenuOpen === "/" && (
                     <div className="composer-slash-menu">
-                      {slashComposerCommands.map((command) => (
+                      <div className="composer-menu-section-label">Codex</div>
+                      {codexSlashCommands.map((command) => (
                         <button
                           key={command.command}
                           type="button"
@@ -4336,13 +4341,22 @@ const Composer = memo(function Composer({
                           <span className="slash-command-description">{command.description}</span>
                         </button>
                       ))}
-                      <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken(triggerMenuOpen);
-                        setTriggerMenuOpen(null);
-                        setSavedDraftsOpen(true);
-                      }}>
-                        <span className="slash-command-name">drafts</span>
+                      <div className="composer-menu-section-label">App</div>
+                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(onOpenSettings)}>
+                        <span className="slash-command-name"><Settings size={14} /> Settings</span>
+                        <span className="slash-command-description">Edit cwd, model, effort, and permissions</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(onArchive)}>
+                        <span className="slash-command-name"><Archive size={14} /> {archiveLabel}</span>
+                        <span className="slash-command-description">{archiveLabel} this thread</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(() => setSavedDraftsOpen(true))}>
+                        <span className="slash-command-name"><Save size={14} /> Drafts</span>
                         <span className="slash-command-description">Open saved composer drafts</span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(onFork)}>
+                        <span className="slash-command-name"><GitFork size={14} /> Fork</span>
+                        <span className="slash-command-description">Create a new branch of this thread</span>
                       </button>
                     </div>
                   )}
