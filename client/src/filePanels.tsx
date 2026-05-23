@@ -17,7 +17,8 @@ export function FileExplorerModal({
   onBrowse,
   onClose,
   onOpenFile,
-  onRefresh
+  onRefresh,
+  title = "Files"
 }: {
   explorer: FileExplorer | null;
   loading: boolean;
@@ -25,6 +26,7 @@ export function FileExplorerModal({
   onClose: () => void;
   onOpenFile: (entry: FileExplorerEntry) => Promise<void>;
   onRefresh: () => void;
+  title?: string;
 }) {
   const [filter, setFilter] = useState("");
   const visibleEntries = useMemo(() => {
@@ -54,7 +56,7 @@ export function FileExplorerModal({
       <section className="modal file-explorer-modal" role="dialog" aria-modal="true" aria-labelledby="file-explorer-title">
         <header className="modal-header">
           <div className="file-viewer-title">
-            <h2 id="file-explorer-title">Files</h2>
+            <h2 id="file-explorer-title">{title}</h2>
             <p className="muted">{explorer?.displayPath || "Loading project files"}</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} title="Close">

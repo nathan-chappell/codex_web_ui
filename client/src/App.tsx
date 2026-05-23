@@ -24,6 +24,7 @@ import {
   Plus,
   Radiation,
   RefreshCw,
+  Search,
   Send,
   Trash2,
   X
@@ -77,6 +78,7 @@ import {
   getClientRequests,
   getMcpServers,
   getStatus,
+  listSkills,
   login,
   logout,
   openEventStream,
@@ -91,7 +93,7 @@ import {
 } from "./api";
 import type { AuthEventStream } from "./api";
 import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
-import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, McpServerList, McpServerStatus, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, Thread, ThreadItem, ThreadTokenUsage, TokenUsageBreakdown, Turn, UiSettings } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FileExplorerEntry, FilePreview, FileReference, JsonValue, McpServerList, McpServerStatus, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, SkillReference, Thread, ThreadItem, ThreadTokenUsage, TokenUsageBreakdown, Turn, UiSettings } from "./types";
 
 const defaultSettings: UiSettings = {
   cwd: "",
@@ -176,9 +178,13 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [fileViewer, setFileViewer] = useState<{ reference: FileReference; file: FilePreview } | null>(null);
   const [fileViewerLoading, setFileViewerLoading] = useState<FileReference | null>(null);
   const [fileExplorerOpen, setFileExplorerOpen] = useState(false);
+  const [fileExplorerMode, setFileExplorerMode] = useState<"view" | "reference">("view");
   const [fileExplorer, setFileExplorer] = useState<FileExplorer | null>(null);
   const [fileExplorerCache, setFileExplorerCache] = useState<Record<string, FileExplorer>>({});
   const [fileExplorerLoading, setFileExplorerLoading] = useState(false);
+  const [skillSelectorOpen, setSkillSelectorOpen] = useState(false);
+  const [skills, setSkills] = useState<SkillReference[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
   const [loadingThreadByPane, setLoadingThreadByPane] = useState<Record<number, string>>({});
   const [clientRequests, setClientRequests] = useState<Record<string, ClientRequest>>({});
   const [respondingClientRequestIds, setRespondingClientRequestIds] = useState<Set<string>>(new Set());
@@ -194,6 +200,8 @@ export default function App({ initialThreadId = null }: AppProps) {
   const threadLoadSeqRef = useRef(0);
   const fileExplorerLoadSeqRef = useRef(0);
   const filePreviewLoadSeqRef = useRef(0);
+  const fileReferenceSelectRef = useRef<((entry: FileExplorerEntry, explorer: FileExplorer) => void) | null>(null);
+  const skillSelectRef = useRef<((skill: SkillReference) => void) | null>(null);
   const paneThreadLoadTokensRef = useRef<Record<number, number>>({});
   const appliedInitialThreadIdRef = useRef<string | null>(null);
   const activePaneIndexRef = useRef(activePaneIndex);
@@ -350,6 +358,8 @@ export default function App({ initialThreadId = null }: AppProps) {
   const handleSelectPaneThread = useStableCallback((threadId: string, paneIndex: number) => selectThread(threadId, paneIndex));
   const handleSendPaneMessage = useStableCallback((thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => sendMessageText(thread, paneIndex, text, action));
   const handleOpenFileReference = useStableCallback((reference: FileReference) => openFileReference(reference));
+  const handleReferenceFile = useStableCallback((onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => openFileExplorerForReference(onSelect));
+  const handleReferenceSkill = useStableCallback((onSelect: (skill: SkillReference) => void) => openSkillSelector(onSelect));
   const handlePaneError = useStableCallback((error: unknown) => showToast(error));
   const handleRespondClientRequest = useStableCallback((request: ClientRequest, decision: ApprovalDecision) => respondToClientRequest(request, decision));
   useEffect(() => {
@@ -742,6 +752,8 @@ export default function App({ initialThreadId = null }: AppProps) {
                   onRenameThread={handleRenamePaneThread}
                   onError={handlePaneError}
                   onOpenFile={handleOpenFileReference}
+                  onReferenceFile={handleReferenceFile}
+                  onReferenceSkill={handleReferenceSkill}
                   onSelectPaneThread={handleSelectPaneThread}
                   onSendMessage={handleSendPaneMessage}
                   paneIndex={paneIndex}
@@ -795,9 +807,19 @@ export default function App({ initialThreadId = null }: AppProps) {
           explorer={fileExplorer}
           loading={fileExplorerLoading}
           onBrowse={(pathValue) => void loadFileExplorer(fileExplorer?.cwd || defaultFileExplorerCwd(), pathValue)}
-          onClose={() => setFileExplorerOpen(false)}
-          onOpenFile={(entry) => fileExplorer ? openFileReference({ path: entry.path, cwd: fileExplorer.cwd, label: entry.name }) : Promise.resolve()}
-          onRefresh={() => fileExplorer ? void loadFileExplorer(fileExplorer.cwd, fileExplorer.path, true) : void openFileExplorer()}
+          onClose={closeFileExplorer}
+          onOpenFile={handleFileExplorerFile}
+          onRefresh={() => fileExplorer ? void loadFileExplorer(fileExplorer.cwd, fileExplorer.path, true) : void loadFileExplorer(defaultFileExplorerCwd(), null, true)}
+          title={fileExplorerMode === "reference" ? "Reference file" : "Files"}
+        />
+      )}
+      {skillSelectorOpen && (
+        <SkillSelectorModal
+          loading={skillsLoading}
+          onClose={closeSkillSelector}
+          onRefresh={() => void loadSkills(true)}
+          onSelect={handleSkillSelect}
+          skills={skills}
         />
       )}
       {fileViewer && (
@@ -951,8 +973,36 @@ export default function App({ initialThreadId = null }: AppProps) {
   }
 
   async function openFileExplorer() {
+    setFileExplorerMode("view");
+    fileReferenceSelectRef.current = null;
     setFileExplorerOpen(true);
     await loadFileExplorer(defaultFileExplorerCwd());
+  }
+
+  async function openFileExplorerForReference(onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) {
+    fileReferenceSelectRef.current = onSelect;
+    setFileExplorerMode("reference");
+    setFileExplorerOpen(true);
+    await loadFileExplorer(defaultFileExplorerCwd());
+  }
+
+  function closeFileExplorer() {
+    fileReferenceSelectRef.current = null;
+    setFileExplorerMode("view");
+    setFileExplorerOpen(false);
+  }
+
+  async function handleFileExplorerFile(entry: FileExplorerEntry) {
+    if (!fileExplorer) {
+      return;
+    }
+    const onSelect = fileReferenceSelectRef.current;
+    if (fileExplorerMode === "reference" && onSelect) {
+      onSelect(entry, fileExplorer);
+      closeFileExplorer();
+      return;
+    }
+    await openFileReference({ path: entry.path, cwd: fileExplorer.cwd, label: entry.name });
   }
 
   async function loadFileExplorer(cwd: string, pathValue?: string | null, force = false) {
@@ -1016,6 +1066,38 @@ export default function App({ initialThreadId = null }: AppProps) {
         showToast(error);
       }
     }
+  }
+
+  async function openSkillSelector(onSelect: (skill: SkillReference) => void) {
+    skillSelectRef.current = onSelect;
+    setSkillSelectorOpen(true);
+    if (!skills.length) {
+      await loadSkills();
+    }
+  }
+
+  function closeSkillSelector() {
+    skillSelectRef.current = null;
+    setSkillSelectorOpen(false);
+  }
+
+  async function loadSkills(force = false) {
+    if (skills.length && !force) {
+      return;
+    }
+    setSkillsLoading(true);
+    try {
+      setSkills(await listSkills());
+    } catch (error) {
+      showToast(error);
+    } finally {
+      setSkillsLoading(false);
+    }
+  }
+
+  function handleSkillSelect(skill: SkillReference) {
+    skillSelectRef.current?.(skill);
+    closeSkillSelector();
   }
 
   async function loadSessions(page = sessionPage) {
@@ -1913,6 +1995,8 @@ const ThreadPane = memo(function ThreadPane({
   onRenameThread,
   onError,
   onOpenFile,
+  onReferenceFile,
+  onReferenceSkill,
   onSelectPaneThread,
   onSendMessage,
   paneIndex,
@@ -1933,6 +2017,8 @@ const ThreadPane = memo(function ThreadPane({
   onRenameThread: (thread: Thread, name: string) => Promise<void>;
   onError: (error: unknown) => void;
   onOpenFile: (reference: FileReference) => Promise<void>;
+  onReferenceFile: (onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => void;
+  onReferenceSkill: (onSelect: (skill: SkillReference) => void) => void;
   onSelectPaneThread: (threadId: string, paneIndex: number) => void;
   onSendMessage: (thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => Promise<boolean>;
   paneIndex: number;
@@ -2136,6 +2222,8 @@ const ThreadPane = memo(function ThreadPane({
             contextUsage={mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsageByThreadId[thread.id] ?? null)}
             onError={onError}
             onCollapsedChange={handleComposerCollapsedChange}
+            onReferenceFile={onReferenceFile}
+            onReferenceSkill={onReferenceSkill}
           />
         </>
       ) : (
@@ -3145,6 +3233,8 @@ const Composer = memo(function Composer({
   onError,
   onFork,
   onInterrupt,
+  onReferenceFile,
+  onReferenceSkill,
   onSend
 }: {
   activeTurnId: string | null;
@@ -3159,6 +3249,8 @@ const Composer = memo(function Composer({
   onError: (error: unknown) => void;
   onFork: () => void;
   onInterrupt: () => void;
+  onReferenceFile: (onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => void;
+  onReferenceSkill: (onSelect: (skill: SkillReference) => void) => void;
   onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
 }) {
   const [uploading, setUploading] = useState(false);
@@ -3358,6 +3450,7 @@ const Composer = memo(function Composer({
             rows={5}
             placeholder="Send a new message or steer the active turn"
             onInput={updateDraftPreview}
+            onFocus={() => setComposerMenuOpen(false)}
             onKeyDown={(event) => void handleTextareaKeyDown(event)}
             onScroll={syncDraftPreviewScroll}
           />
@@ -3392,13 +3485,15 @@ const Composer = memo(function Composer({
                   </button>
                   <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={() => {
                     setComposerMenuOpen(false);
-                    insertDraftText("@");
+                    onReferenceFile((entry) => {
+                      insertDraftText(markdownFileReference(entry.name, entry.relativePath || entry.path), { block: true });
+                    });
                   }}>
                     <AtSign size={16} /> Reference file
                   </button>
                   <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={() => {
                     setComposerMenuOpen(false);
-                    insertDraftText("$");
+                    onReferenceSkill((skill) => insertDraftText(`$${skill.name}`));
                   }}>
                     <DollarSign size={16} /> Reference skill
                   </button>
@@ -3517,6 +3612,69 @@ function SendChoiceModal({
           <button className="primary-button" type="button" onClick={onSteer} disabled={disabled}>
             <Send size={16} /> Steer active turn
           </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SkillSelectorModal({
+  loading,
+  onClose,
+  onRefresh,
+  onSelect,
+  skills
+}: {
+  loading: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+  onSelect: (skill: SkillReference) => void;
+  skills: SkillReference[];
+}) {
+  const [filter, setFilter] = useState("");
+  const visibleSkills = useMemo(() => {
+    const normalized = filter.trim().toLowerCase();
+    if (!normalized) {
+      return skills;
+    }
+    return skills.filter((skill) => `${skill.name}\n${skill.description || ""}\n${skill.source}`.toLowerCase().includes(normalized));
+  }, [filter, skills]);
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modal skill-selector-modal" role="dialog" aria-modal="true" aria-labelledby="skill-selector-title">
+        <header className="modal-header">
+          <div className="file-viewer-title">
+            <h2 id="skill-selector-title">Reference skill</h2>
+            <p className="muted">{skills.length ? `${skills.length} skills available` : "Loading skills"}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="file-explorer-toolbar">
+          <label className="file-search-field">
+            <Search size={15} />
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter skills" autoFocus />
+          </label>
+          <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} title="Refresh skills" aria-label="Refresh skills">
+            <RefreshCw size={16} className={loading ? "spin-icon" : ""} />
+          </button>
+        </div>
+        <div className={`skill-selector-list ${loading ? "loading" : ""}`}>
+          {loading && !skills.length ? (
+            <Shimmer as="span" className="muted empty-pad" duration={1.4}>Loading skills</Shimmer>
+          ) : visibleSkills.length === 0 ? (
+            <p className="muted empty-pad">No skills found.</p>
+          ) : (
+            visibleSkills.map((skill) => (
+              <button className="skill-selector-row" key={`${skill.source}:${skill.name}:${skill.path}`} type="button" onClick={() => onSelect(skill)}>
+                <strong>${skill.name}</strong>
+                {skill.description && <span>{skill.description}</span>}
+                <small>{skill.source}</small>
+              </button>
+            ))
+          )}
         </div>
       </section>
     </div>

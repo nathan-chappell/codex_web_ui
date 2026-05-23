@@ -1,4 +1,4 @@
-import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, McpServerList, RepositoryBrowser, ServerEvent, ServerStatus, UploadedAttachment } from "./types";
+import type { AuthState, ClientRequest, FileExplorer, FilePreview, FileReference, JsonValue, McpServerList, RepositoryBrowser, ServerEvent, ServerStatus, SkillReference, UploadedAttachment } from "./types";
 
 const AUTH_TOKEN_STORAGE_KEY = "codex-web-ui-auth-token-v1";
 export const AUTH_UNAUTHORIZED_EVENT = "codex-web-ui-auth-unauthorized";
@@ -91,6 +91,11 @@ export async function browseFiles(options: { cwd?: string | null; path?: string 
   const query = params.toString() ? `?${params.toString()}` : "";
   const body = await getJson<{ explorer: FileExplorer }>(`/api/files/explore${query}`);
   return body.explorer;
+}
+
+export async function listSkills(): Promise<SkillReference[]> {
+  const body = await getJson<{ skills: SkillReference[] }>("/api/skills");
+  return body.skills;
 }
 
 export async function createRepository(parentPath: string, name: string): Promise<RepositoryBrowser> {

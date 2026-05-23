@@ -116,6 +116,13 @@ export interface FileExplorer {
   entries: FileExplorerEntry[];
 }
 
+export interface SkillReference {
+  name: string;
+  path: string;
+  source: string;
+  description: string | null;
+}
+
 export interface Turn {
   id: string;
   status: "completed" | "interrupted" | "failed" | "inProgress" | string;

@@ -190,6 +190,11 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     return json({ ok: true, explorer: await exploreFiles(url.searchParams) }, 200, cors);
   }
 
+  if (pathname === "/api/skills" && request.method === "GET") {
+    const summary = bridge.summary();
+    return json({ ok: true, skills: await listSkills(typeof summary.cwd === "string" ? summary.cwd : null) }, 200, cors);
+  }
+
   if (pathname === "/api/server/restart" && request.method === "POST") {
     await bridge.restart();
     return json({ ok: true, status: bridge.summary() }, 200, cors);
@@ -424,6 +429,67 @@ function fileExplorerEntry(filePath: string, cwd: string, type: "file" | "direct
     kind: kind || null,
     previewable: type === "file" && Boolean(kind)
   };
+}
+
+async function listSkills(cwd: string | null): Promise<Record<string, unknown>[]> {
+  const codexHome = process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : path.join(homeDir, ".codex");
+  const sources = [
+    { source: "workspace", path: cwd ? path.join(cwd, ".codex", "skills") : "" },
+    { source: "project", path: path.join(projectRoot, ".codex", "skills") },
+    { source: "user", path: path.join(codexHome, "skills") }
+  ].filter((source) => source.path);
+  const byName = new Map<string, Record<string, unknown>>();
+  for (const source of sources) {
+    for (const skill of await readSkillsFromDirectory(source.path, source.source)) {
+      const name = String(skill.name);
+      if (!byName.has(name)) {
+        byName.set(name, skill);
+      }
+    }
+  }
+  return [...byName.values()].sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" }));
+}
+
+async function readSkillsFromDirectory(root: string, source: string): Promise<Record<string, unknown>[]> {
+  if (!existsSync(root)) {
+    return [];
+  }
+  const results: Record<string, unknown>[] = [];
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const entryPath = path.join(root, entry.name);
+    if (entry.name === ".system") {
+      results.push(...await readSkillsFromDirectory(entryPath, "system"));
+      continue;
+    }
+    const skillFile = path.join(entryPath, "SKILL.md");
+    if (!existsSync(skillFile)) {
+      continue;
+    }
+    results.push({
+      name: entry.name,
+      path: entryPath,
+      source,
+      description: await readSkillDescription(skillFile)
+    });
+  }
+  return results;
+}
+
+async function readSkillDescription(skillFile: string): Promise<string | null> {
+  const content = await readFile(skillFile, "utf8").catch(() => "");
+  const description = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("#") && !line.startsWith("---"));
+  return description ? truncateText(description.replace(/^description:\s*/i, "").replace(/^["']|["']$/g, ""), 220) : null;
+}
+
+function truncateText(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1)}...`;
 }
 
 async function readReferencedFile(searchParams: URLSearchParams): Promise<Record<string, unknown>> {
