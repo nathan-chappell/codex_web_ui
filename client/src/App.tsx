@@ -109,6 +109,20 @@ const defaultSettings: UiSettings = {
   sandbox: "workspace-write"
 };
 
+const slashComposerCommands = [
+  { command: "/help", description: "Show available Codex commands" },
+  { command: "/status", description: "Show session status and usage" },
+  { command: "/compact", description: "Compact conversation context" },
+  { command: "/review", description: "Run a focused code review" },
+  { command: "/model", description: "Switch model", needsArgument: true },
+  { command: "/approval", description: "Change approval mode", needsArgument: true },
+  { command: "/sandbox", description: "Change sandbox mode", needsArgument: true },
+  { command: "/use", description: "Load a skill", needsArgument: true },
+  { command: "/clear", description: "Clear conversation history" },
+  { command: "/reset", description: "Reset session state" },
+  { command: "/apps", description: "Manage app connectors" }
+] as const;
+
 type ComposerAction = "send" | "steer";
 type ComposerTriggerMenu = ComposerTrigger;
 type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAmendment" | "decline";
@@ -2333,6 +2347,7 @@ const ThreadPane = memo(function ThreadPane({
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
   const autoScrollRef = useRef(true);
+  const scrollFrameRef = useRef<number | null>(null);
   const itemCount = useMemo(() => countDisplayThreadItems(thread?.turns ?? []), [thread?.turns]);
   const contextUsage = useMemo(
     () => (thread ? mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsage) : null),
@@ -2340,7 +2355,7 @@ const ThreadPane = memo(function ThreadPane({
   );
   const handleRenderedThreadItemsChange = useCallback(() => {
     if (autoScrollRef.current) {
-      scrollToEnd("smooth");
+      scrollToEnd("smooth", 2);
     }
   }, []);
 
@@ -2349,8 +2364,39 @@ const ThreadPane = memo(function ThreadPane({
       if (chromeStateFrameRef.current !== null) {
         window.cancelAnimationFrame(chromeStateFrameRef.current);
       }
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!thread || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    let cancelled = false;
+    let observer: ResizeObserver | null = null;
+    const frame = window.requestAnimationFrame(() => {
+      if (cancelled) {
+        return;
+      }
+      const content = conversationRef.current?.querySelector(".turn-history-content");
+      if (!(content instanceof HTMLElement)) {
+        return;
+      }
+      observer = new ResizeObserver(() => {
+        if (autoScrollRef.current) {
+          scrollToEnd("instant", 1);
+        }
+      });
+      observer.observe(content);
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [thread?.id]);
 
   useEffect(() => {
     if (!thread) {
@@ -2386,13 +2432,13 @@ const ThreadPane = memo(function ThreadPane({
     const bottomDistance = element.scrollHeight - nextTop - element.clientHeight;
     const scrollingTowardHistory = scrollDelta < -18;
     const scrollingTowardBottom = scrollDelta > 18;
-    const nearBottom = bottomDistance < 24;
+    const nearBottom = bottomDistance < 48;
     const awayFromBottom = bottomDistance > 120;
 
     conversationScrollTopRef.current = nextTop;
     if (nearBottom) {
       autoScrollRef.current = true;
-    } else if (scrollingTowardHistory || awayFromBottom) {
+    } else if (scrollingTowardHistory && awayFromBottom) {
       autoScrollRef.current = false;
     }
 
@@ -2416,22 +2462,33 @@ const ThreadPane = memo(function ThreadPane({
     }
   }
 
-  function scrollToEnd(behavior: ScrollBehavior = "smooth") {
+  function scrollToEnd(behavior: ScrollBehavior = "smooth", passes = 1) {
     autoScrollRef.current = true;
-    window.requestAnimationFrame(() => {
-      const element = conversationRef.current;
-      if (!element) {
-        return;
-      }
-      element.scrollTo({ top: element.scrollHeight, behavior });
-      conversationScrollTopRef.current = element.scrollTop;
-      if (isMobileViewport()) {
-        setTopHiddenState(true);
-        if (!composerManuallyCollapsedRef.current) {
-          setComposerCollapsedState(false);
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+    }
+    const applyScroll = (remaining: number) => {
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        const element = conversationRef.current;
+        if (!element) {
+          return;
         }
-      }
-    });
+        element.scrollTo({ top: element.scrollHeight, behavior });
+        conversationScrollTopRef.current = Math.max(0, element.scrollHeight - element.clientHeight);
+        if (remaining > 1 && autoScrollRef.current) {
+          applyScroll(remaining - 1);
+          return;
+        }
+        if (isMobileViewport()) {
+          setTopHiddenState(true);
+          if (!composerManuallyCollapsedRef.current) {
+            setComposerCollapsedState(false);
+          }
+        }
+      });
+    };
+    applyScroll(Math.max(1, passes));
   }
 
   function handleComposerCollapsedChange(collapsed: boolean) {
@@ -2973,7 +3030,7 @@ const TurnHistory = memo(function TurnHistory({
     );
   }
   return (
-    <>
+    <div className="turn-history-content">
       {hiddenCount > 0 && (
         <div className="history-limit" ref={loadEarlierRef} aria-live="polite">
           <span className="spinner" aria-hidden="true" />
@@ -2996,7 +3053,7 @@ const TurnHistory = memo(function TurnHistory({
           })}
         </section>
       ))}
-    </>
+    </div>
   );
 });
 
@@ -4128,6 +4185,12 @@ const Composer = memo(function Composer({
     onReferenceSkill((skill) => insertTriggerSelectionText(`$${skill.name}`));
   }
 
+  function insertSlashCommand(command: typeof slashComposerCommands[number]) {
+    removeCurrentTriggerToken(triggerMenuOpen);
+    setTriggerMenuOpen(null);
+    insertDraftText(`${command.command}${"needsArgument" in command && command.needsArgument ? " " : ""}`);
+  }
+
   function insertTriggerSelectionText(value: string, options: { block?: boolean } = {}) {
     removeCurrentTriggerToken(triggerMenuOpen);
     insertDraftText(value, options);
@@ -4260,36 +4323,28 @@ const Composer = memo(function Composer({
                     </button>
                   )}
                   {triggerMenuOpen === "/" && (
-                    <>
+                    <div className="composer-slash-menu">
+                      {slashComposerCommands.map((command) => (
+                        <button
+                          key={command.command}
+                          type="button"
+                          role="menuitem"
+                          disabled={Boolean(submittingAction)}
+                          onClick={() => insertSlashCommand(command)}
+                        >
+                          <span className="slash-command-name">{command.command}</span>
+                          <span className="slash-command-description">{command.description}</span>
+                        </button>
+                      ))}
                       <button type="button" role="menuitem" onClick={() => {
                         removeCurrentTriggerToken(triggerMenuOpen);
                         setTriggerMenuOpen(null);
                         setSavedDraftsOpen(true);
                       }}>
-                        <Save size={16} /> Saved drafts
+                        <span className="slash-command-name">drafts</span>
+                        <span className="slash-command-description">Open saved composer drafts</span>
                       </button>
-                      <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken(triggerMenuOpen);
-                        setTriggerMenuOpen(null);
-                        onFork();
-                      }}>
-                        <GitFork size={16} /> Fork
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken(triggerMenuOpen);
-                        setTriggerMenuOpen(null);
-                        onCompact();
-                      }}>
-                        <Minimize2 size={16} /> Compact
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken(triggerMenuOpen);
-                        setTriggerMenuOpen(null);
-                        onArchive();
-                      }}>
-                        <Archive size={16} /> {archiveLabel}
-                      </button>
-                    </>
+                    </div>
                   )}
                 </div>
               )}
