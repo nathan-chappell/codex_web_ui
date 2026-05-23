@@ -6,6 +6,13 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { authState, isAuthenticated, loginWithPassword } from "./auth";
 import { corsHeaders } from "./cors";
+import {
+  isMcpOAuthCallbackPath,
+  mcpOAuthCallbackBaseUrl,
+  mcpOAuthCallbackPort,
+  registerMcpOAuthCallback,
+  relayMcpOAuthCallback
+} from "./mcpOAuthRelay";
 import { codexConfigPath, saveMcpServerConfig } from "./mcpConfig";
 import { enforceRpcPermissions } from "./permissions";
 import { getRuntime, homeDir, projectRoot } from "./runtime";
@@ -39,6 +46,10 @@ const mimeTypes: Record<string, string> = {
 
 export async function handleApiRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
+  if (isMcpOAuthCallbackPath(url.pathname)) {
+    return relayMcpOAuthCallback(request);
+  }
+
   const cors = corsHeaders(request);
   if (request.method === "OPTIONS") {
     return cors.allowed
@@ -154,6 +165,7 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     if (!name) {
       return json({ ok: false, error: "Missing MCP server name" }, 400, cors);
     }
+    await configureMcpOAuthRelay(request);
     const result = asRecord(await bridge.request("mcpServer/oauth/login", { name }));
     const authorizationUrl = typeof result.authorization_url === "string"
       ? result.authorization_url
@@ -163,6 +175,7 @@ async function dispatchApiRequest(request: Request, url: URL, cors: Headers): Pr
     if (!authorizationUrl) {
       return json({ ok: false, error: "Codex did not return an MCP OAuth authorization URL" }, 502, cors);
     }
+    registerMcpOAuthCallback(name, authorizationUrl);
     return json({ ok: true, authorizationUrl }, 200, cors);
   }
 
@@ -304,6 +317,25 @@ async function reloadMcpServers(): Promise<Record<string, unknown>> {
   const { bridge } = await getRuntime();
   await bridge.request("config/mcpServer/reload", {});
   return listMcpServers();
+}
+
+async function configureMcpOAuthRelay(request: Request): Promise<void> {
+  const { bridge } = await getRuntime();
+  await bridge.request("config/batchWrite", {
+    edits: [
+      {
+        keyPath: "mcp_oauth_callback_port",
+        value: mcpOAuthCallbackPort(),
+        mergeStrategy: "replace"
+      },
+      {
+        keyPath: "mcp_oauth_callback_url",
+        value: mcpOAuthCallbackBaseUrl(request),
+        mergeStrategy: "replace"
+      }
+    ],
+    reloadUserConfig: true
+  });
 }
 
 async function listMcpServers(): Promise<Record<string, unknown>> {

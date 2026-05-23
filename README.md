@@ -183,18 +183,21 @@ npm run app-server:status
 degraded, restarts the sidecar, and waits until the Unix socket accepts
 connections. Use it when the UI reports `connect ENOENT ...codex-app-server.sock`.
 
-For MCP OAuth from a phone or another machine, configure Codex's OAuth callback
-to use a reachable LAN address instead of the default loopback URL. Add this to
-`~/.codex/config.toml`, replacing the host with your machine's current LAN IP:
+For MCP OAuth from a phone or another machine, Codex Web UI relays OAuth
+callbacks through the currently used Web UI origin. When an MCP OAuth login
+starts, the backend updates Codex's callback config to:
 
 ```toml
 mcp_oauth_callback_port = 33420
-mcp_oauth_callback_url = "http://192.168.1.66:33420/callback"
+mcp_oauth_callback_url = "http://<web-ui-origin>/api/mcp/oauth/callback"
 ```
 
-When the callback URL uses a non-loopback host, Codex's callback listener binds
-on `0.0.0.0` for that port, so the browser running the OAuth flow can reach the
-machine hosting Codex Web UI.
+The callback route keeps valid callback path/state pairs in memory, forwards a
+matching callback once to Codex's local listener, and rejects expired, unknown,
+or repeated callbacks. Behind a reverse proxy, set `CODEX_WEB_UI_PUBLIC_ORIGIN`
+if `X-Forwarded-Proto` and `X-Forwarded-Host` are not enough to reconstruct the
+public origin. Set `CODEX_WEB_UI_MCP_OAUTH_CALLBACK_PORT` to change the local
+Codex callback listener port.
 
 To expose the running server through ngrok:
 
