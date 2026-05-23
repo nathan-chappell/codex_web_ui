@@ -30,7 +30,7 @@ import {
   X
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -118,7 +118,7 @@ type StoredLayout = {
   threadPaneCount?: ThreadPaneCount;
 };
 
-const THREAD_ITEM_BATCH_SIZE = 20;
+const THREAD_ITEM_BATCH_SIZE = 8;
 const SESSION_PAGE_SIZE = 50;
 const ACCOUNT_RATE_LIMIT_ID = "codex";
 const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
@@ -1447,20 +1447,15 @@ export default function App({ initialThreadId = null }: AppProps) {
 
   function rememberOpenThread(thread: Thread, paneIndex = activePaneIndexRef.current, assignPane = true) {
     const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
-    let rememberedThread = reconcileThreadUpdate(thread, openThreadsRef.current[thread.id]);
-    const rememberedUsage = rememberThreadTokenUsage(thread.id, threadTokenUsage(rememberedThread));
-    if (rememberedUsage) {
-      rememberedThread = { ...rememberedThread, tokenUsage: rememberedUsage };
-    }
-    setOpenThreads((current) => {
-      rememberedThread = reconcileThreadUpdate(thread, current[thread.id]);
-      const currentUsage = mergeThreadTokenUsage(threadTokenUsage(rememberedThread), threadTokenUsageByIdRef.current[thread.id] ?? null);
-      if (currentUsage) {
-        rememberedThread = { ...rememberedThread, tokenUsage: currentUsage };
-      }
-      const next = { ...current, [thread.id]: rememberedThread };
-      openThreadsRef.current = next;
-      return next;
+    const rememberedUsage = rememberThreadTokenUsage(thread.id, threadTokenUsage(thread));
+    const incomingThread = rememberedUsage ? { ...thread, tokenUsage: rememberedUsage } : thread;
+    startTransition(() => {
+      setOpenThreads((current) => {
+        const rememberedThread = reconcileThreadUpdate(incomingThread, current[thread.id]);
+        const next = { ...current, [thread.id]: rememberedThread };
+        openThreadsRef.current = next;
+        return next;
+      });
     });
     if (assignPane) {
       setPaneThreadId(targetPaneIndex, thread.id);
@@ -2643,24 +2638,22 @@ function patchTurnItem(turn: Turn, itemId: string, updateItem: (item: ThreadItem
 }
 
 function reconcileThreadUpdate(incoming: Thread, existing: Thread | undefined): Thread {
-  const mergedUsage = mergeThreadTokenUsage(threadTokenUsage(incoming), existing ? threadTokenUsage(existing) : null);
-  const nextIncoming = mergedUsage ? { ...incoming, tokenUsage: mergedUsage } : incoming;
   if (!existing) {
-    return nextIncoming;
+    return incoming;
   }
-  if (!nextIncoming.turns?.length) {
-    return existing.turns?.length ? { ...nextIncoming, turns: existing.turns } : nextIncoming;
+  if (!incoming.turns?.length) {
+    return existing.turns?.length ? { ...incoming, turns: existing.turns } : incoming;
   }
   if (!existing.turns?.length) {
-    return nextIncoming;
+    return incoming;
   }
   const existingTurns = new Map(existing.turns.map((turn) => [turn.id, turn]));
-  const incomingIds = new Set(nextIncoming.turns.map((turn) => turn.id));
+  const incomingIds = new Set(incoming.turns.map((turn) => turn.id));
   const transientTurns = existing.turns.filter((turn) => !incomingIds.has(turn.id) && isTransientTurn(turn));
   return {
-    ...nextIncoming,
+    ...incoming,
     turns: [
-      ...nextIncoming.turns.map((turn) => reconcileTurnUpdate(turn, existingTurns.get(turn.id))),
+      ...incoming.turns.map((turn) => reconcileTurnUpdate(turn, existingTurns.get(turn.id))),
       ...transientTurns
     ]
   };
