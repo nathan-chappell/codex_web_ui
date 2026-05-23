@@ -2155,6 +2155,11 @@ const ThreadPane = memo(function ThreadPane({
     () => (thread ? mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsage) : null),
     [thread, tokenUsage]
   );
+  const handleRenderedThreadItemsChange = useCallback(() => {
+    if (autoScrollRef.current) {
+      scrollToEnd();
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -2315,6 +2320,7 @@ const ThreadPane = memo(function ThreadPane({
             <TurnHistory
               cwd={thread.cwd || null}
               key={thread.id}
+              onRenderedItemsChange={handleRenderedThreadItemsChange}
               onOpenFile={onOpenFile}
               threadId={thread.id}
               turns={thread.turns ?? []}
@@ -2603,12 +2609,14 @@ function QuotaMetric({ value }: { value: number | null }) {
 
 const TurnHistory = memo(function TurnHistory({
   cwd,
+  onRenderedItemsChange,
   onOpenFile,
   scrollContainerRef,
   threadId,
   turns
 }: {
   cwd: string | null;
+  onRenderedItemsChange: () => void;
   onOpenFile: (reference: FileReference) => Promise<void>;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   threadId: string;
@@ -2691,6 +2699,10 @@ const TurnHistory = memo(function TurnHistory({
       cancelScheduledWork?.();
     };
   }, [threadId, visibleTurns]);
+
+  useLayoutEffect(() => {
+    onRenderedItemsChange();
+  }, [onRenderedItemsChange, readyItemKeys]);
 
   useLayoutEffect(() => {
     const previousHeight = pendingScrollHeightRef.current;
