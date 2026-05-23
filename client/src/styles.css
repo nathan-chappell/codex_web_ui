@@ -710,6 +710,10 @@ textarea {
   padding: 42px 16px;
 }
 
+.thread-loading-placeholder {
+  margin-top: 0;
+}
+
 .thread-header {
   justify-content: flex-start;
   gap: 10px;
@@ -2621,6 +2625,7 @@ textarea {
     display: grid;
     height: 100%;
     max-height: 100%;
+    outline: 0;
   }
 
   .sessions-panel {

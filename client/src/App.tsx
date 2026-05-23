@@ -2226,12 +2226,12 @@ const ThreadPane = memo(function ThreadPane({
             onReferenceSkill={onReferenceSkill}
           />
         </>
+      ) : isLoading ? (
+        <div className="empty-state thread-loading-placeholder" aria-hidden="true" />
       ) : (
         <div className="empty-state">
-          <h2>{isLoading ? <Shimmer as="span" duration={1.4}>Loading thread</Shimmer> : "Select a thread"}</h2>
-          {!isLoading && (
-            <p>Choose an existing thread or start a new one.</p>
-          )}
+          <h2>Select a thread</h2>
+          <p>Choose an existing thread or start a new one.</p>
         </div>
       )}
     </section>
