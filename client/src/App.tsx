@@ -575,11 +575,13 @@ export default function App({ initialThreadId = null }: AppProps) {
       </header>
 
       <nav className="mobile-pane-tabs" aria-label="Panes">
-        <button className={mobilePane === "sessions" ? "selected" : ""} type="button" onClick={() => setMobilePane("sessions")}>
+        <button
+          aria-pressed={mobilePane === "sessions"}
+          className={`mobile-threads-pill ${mobilePane === "sessions" ? "selected" : ""}`}
+          type="button"
+          onClick={() => setMobilePane("sessions")}
+        >
           Threads
-        </button>
-        <button className={mobilePane === "thread" ? "selected" : ""} type="button" onClick={() => setMobilePane("thread")}>
-          Thread
         </button>
         <div className="mobile-nav-actions">
           <button className="ghost-button" type="button" onClick={() => setNewSessionOpen(true)} title="New thread" aria-label="New thread">
