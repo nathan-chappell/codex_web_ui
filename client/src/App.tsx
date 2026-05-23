@@ -4,7 +4,6 @@ import {
   Activity,
   Archive,
   AtSign,
-  AudioWaveform,
   ChevronUp,
   ChevronsDown,
   ChevronsUp,
@@ -110,6 +109,9 @@ const defaultSettings: UiSettings = {
   approvalPolicy: "on-request",
   sandbox: "workspace-write"
 };
+
+const idleWaveformLevels = [0.16, 0.26, 0.42, 0.32, 0.22, 0.34, 0.18];
+const transcribingWaveformLevels = [0.3, 0.58, 0.82, 0.48, 0.72, 0.4, 0.62];
 
 type ComposerAction = "send" | "steer";
 type ComposerTriggerMenu = ComposerTrigger;
@@ -3981,6 +3983,7 @@ const Composer = memo(function Composer({
 }) {
   const [uploading, setUploading] = useState(false);
   const [recordingState, setRecordingState] = useState<"idle" | "recording" | "transcribing">("idle");
+  const [waveformLevels, setWaveformLevels] = useState<number[]>(idleWaveformLevels);
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
   const [triggerMenuOpen, setTriggerMenuOpen] = useState<ComposerTriggerMenu | null>(null);
@@ -3994,6 +3997,13 @@ const Composer = memo(function Composer({
   const triggerMenuRef = useRef<HTMLDivElement | null>(null);
   const composerInputRef = useRef<ComposerInputHandle | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioAnalyserRef = useRef<AnalyserNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const audioWaveformFrameRef = useRef<number | null>(null);
+  const audioWaveformLastUpdateRef = useRef(0);
+  const audioWaveformSmoothRef = useRef<number[]>(idleWaveformLevels);
+  const audioWaveformTimeDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
@@ -4145,6 +4155,7 @@ const Composer = memo(function Composer({
       recordingChunksRef.current = [];
       recordingStreamRef.current = stream;
       mediaRecorderRef.current = recorder;
+      startRecordingMeter(stream);
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           recordingChunksRef.current.push(event.data);
@@ -4184,11 +4195,79 @@ const Composer = memo(function Composer({
   }
 
   function stopRecordingStream() {
+    stopRecordingMeter();
     mediaRecorderRef.current = null;
     for (const track of recordingStreamRef.current?.getTracks() ?? []) {
       track.stop();
     }
     recordingStreamRef.current = null;
+  }
+
+  function startRecordingMeter(stream: MediaStream) {
+    stopRecordingMeter();
+    const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextConstructor) {
+      setWaveformLevels(idleWaveformLevels);
+      return;
+    }
+    try {
+      const audioContext = new AudioContextConstructor();
+      const analyser = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(stream);
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.72;
+      source.connect(analyser);
+      audioContextRef.current = audioContext;
+      audioAnalyserRef.current = analyser;
+      audioSourceRef.current = source;
+      audioWaveformTimeDataRef.current = new Uint8Array(analyser.fftSize);
+      audioWaveformSmoothRef.current = idleWaveformLevels;
+      setWaveformLevels(idleWaveformLevels);
+      void audioContext.resume().catch(() => undefined);
+      updateRecordingMeter();
+    } catch {
+      stopRecordingMeter();
+      setWaveformLevels(idleWaveformLevels);
+    }
+  }
+
+  function stopRecordingMeter() {
+    if (audioWaveformFrameRef.current !== null) {
+      window.cancelAnimationFrame(audioWaveformFrameRef.current);
+      audioWaveformFrameRef.current = null;
+    }
+    audioSourceRef.current?.disconnect();
+    audioSourceRef.current = null;
+    audioAnalyserRef.current?.disconnect();
+    audioAnalyserRef.current = null;
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+    void audioContext?.close().catch(() => undefined);
+    audioWaveformTimeDataRef.current = null;
+    audioWaveformLastUpdateRef.current = 0;
+    audioWaveformSmoothRef.current = idleWaveformLevels;
+    setWaveformLevels(idleWaveformLevels);
+  }
+
+  function updateRecordingMeter() {
+    const analyser = audioAnalyserRef.current;
+    const timeData = audioWaveformTimeDataRef.current;
+    if (!analyser || !timeData) {
+      return;
+    }
+    analyser.getByteTimeDomainData(timeData);
+    const nextLevels = calculateWaveformLevels(timeData, audioWaveformSmoothRef.current.length);
+    const smoothed = audioWaveformSmoothRef.current.map((previous, index) => {
+      const next = nextLevels[index] ?? 0;
+      return previous * 0.58 + next * 0.42;
+    });
+    audioWaveformSmoothRef.current = smoothed;
+    const now = performance.now();
+    if (now - audioWaveformLastUpdateRef.current > 70) {
+      audioWaveformLastUpdateRef.current = now;
+      setWaveformLevels(smoothed);
+    }
+    audioWaveformFrameRef.current = window.requestAnimationFrame(updateRecordingMeter);
   }
 
   function openReferenceFile() {
@@ -4393,7 +4472,11 @@ const Composer = memo(function Composer({
                 tooltip={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
                 aria-label={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
               >
-                {recordingState === "idle" ? <Mic size={17} /> : <AudioWaveform className="transcription-waveform" size={17} />}
+                {recordingState === "idle" ? (
+                  <Mic size={17} />
+                ) : (
+                  <AudioLevelMeter levels={recordingState === "recording" ? waveformLevels : transcribingWaveformLevels} />
+                )}
               </PromptInputButton>
               <PromptInputButton
                 className="icon-button interrupt-button"
@@ -4449,6 +4532,37 @@ const Composer = memo(function Composer({
     </>
   );
 });
+
+function AudioLevelMeter({ levels }: { levels: number[] }) {
+  return (
+    <span className="audio-level-meter" aria-hidden="true">
+      {levels.map((level, index) => (
+        <span
+          key={index}
+          style={{ "--level": `${Math.max(0.08, Math.min(1, level))}` } as CSSProperties}
+        />
+      ))}
+    </span>
+  );
+}
+
+function calculateWaveformLevels(data: Uint8Array<ArrayBuffer>, barCount: number): number[] {
+  const chunkSize = Math.max(1, Math.floor(data.length / barCount));
+  return Array.from({ length: barCount }, (_, index) => {
+    const start = index * chunkSize;
+    const end = index === barCount - 1 ? data.length : Math.min(data.length, start + chunkSize);
+    let sumSquares = 0;
+    let peak = 0;
+    for (let offset = start; offset < end; offset += 1) {
+      const centered = Math.abs((data[offset] ?? 128) - 128) / 128;
+      sumSquares += centered * centered;
+      peak = Math.max(peak, centered);
+    }
+    const sampleCount = Math.max(1, end - start);
+    const rms = Math.sqrt(sumSquares / sampleCount);
+    return Math.min(1, Math.max(0.08, rms * 4.2 + peak * 1.25));
+  });
+}
 
 function SendChoiceModal({
   disabled,
