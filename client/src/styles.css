@@ -1617,6 +1617,9 @@ textarea {
   background: #fff;
   color: var(--text);
   padding: 10px 12px;
+  font: inherit;
+  letter-spacing: 0;
+  tab-size: 2;
 }
 
 .composer-rich-text {
@@ -1647,6 +1650,7 @@ textarea {
   z-index: 2;
   background: transparent;
   border-color: transparent;
+  -webkit-text-fill-color: transparent;
   color: transparent;
   caret-color: var(--text);
 }

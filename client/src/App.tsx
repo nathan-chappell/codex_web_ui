@@ -4329,38 +4329,6 @@ const Composer = memo(function Composer({
               >
                 <Paperclip size={17} />
               </PromptInputButton>
-              <PromptInputButton
-                className="icon-button"
-                type="button"
-                disabled={Boolean(submittingAction)}
-                onClick={() => setTriggerMenuOpen((open) => open === "@" ? null : "@")}
-                tooltip="Reference file"
-                aria-label="Reference file"
-                aria-expanded={triggerMenuOpen === "@"}
-              >
-                <AtSign size={17} />
-              </PromptInputButton>
-              <PromptInputButton
-                className="icon-button"
-                type="button"
-                disabled={Boolean(submittingAction)}
-                onClick={() => setTriggerMenuOpen((open) => open === "$" ? null : "$")}
-                tooltip="Reference skill"
-                aria-label="Reference skill"
-                aria-expanded={triggerMenuOpen === "$"}
-              >
-                <DollarSign size={17} />
-              </PromptInputButton>
-              <PromptInputButton
-                className="icon-button"
-                type="button"
-                onClick={() => setTriggerMenuOpen((open) => open === "/" ? null : "/")}
-                tooltip="Composer commands"
-                aria-label="Composer commands"
-                aria-expanded={triggerMenuOpen === "/"}
-              >
-                /
-              </PromptInputButton>
               {triggerMenuOpen && (
                 <div className="composer-trigger-menu" role="menu">
                   {triggerMenuOpen === "@" && (
