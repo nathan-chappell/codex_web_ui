@@ -1655,6 +1655,10 @@ textarea {
   color: var(--red);
 }
 
+.mic-button.recording .transcription-waveform {
+  animation-duration: 850ms;
+}
+
 .mic-button.transcribing {
   background: #eef6f7;
   border-color: #c9dde2;

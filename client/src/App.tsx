@@ -4393,7 +4393,7 @@ const Composer = memo(function Composer({
                 tooltip={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
                 aria-label={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
               >
-                {recordingState === "transcribing" ? <AudioWaveform className="transcription-waveform" size={17} /> : <Mic size={17} />}
+                {recordingState === "idle" ? <Mic size={17} /> : <AudioWaveform className="transcription-waveform" size={17} />}
               </PromptInputButton>
               <PromptInputButton
                 className="icon-button interrupt-button"
