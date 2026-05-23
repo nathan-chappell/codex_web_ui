@@ -2561,28 +2561,24 @@ const ThreadItemView = memo(function ThreadItemView({
   compact?: boolean;
   onOpenFile: (reference: FileReference) => Promise<void>;
 }) {
+  const label = itemLabel(typeForItemLabel(item.type));
   return (
     <article className={`item ${kindClass(item.type)} ${compact ? "compact" : ""}`}>
-      <KindIndicator type={item.type} />
+      {label && <div className="item-label">{label}</div>}
       <div className="item-body">{renderItemBody(item, cwd, onOpenFile)}</div>
     </article>
   );
 });
 
-function KindIndicator({ type }: { type: string }) {
-  const label = labelForKind(type);
-  if (isQuietItemKind(type)) {
-    return (
-      <div className="item-kind item-kind-icon" title={label} aria-label={label}>
-        <MoreHorizontal size={18} />
-      </div>
-    );
+function typeForItemLabel(type: string): string | null {
+  if (type === "agentMessage" || type === "userMessage") {
+    return null;
   }
-  return <div className="item-kind">{label}</div>;
+  return type;
 }
 
-function isQuietItemKind(type: string): boolean {
-  return ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "reasoning"].includes(type);
+function itemLabel(type: string | null): string | null {
+  return type ? labelForKind(type) : null;
 }
 
 function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (reference: FileReference) => Promise<void>) {

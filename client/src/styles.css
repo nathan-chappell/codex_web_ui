@@ -986,33 +986,17 @@ textarea {
 .item {
   margin: 12px 0;
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
 }
 
-.item.compact {
-  grid-template-columns: 56px minmax(0, 1fr);
-}
-
-.item-kind {
+.item-label {
   color: var(--muted-text);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 760;
   text-transform: uppercase;
-  padding-top: 4px;
   letter-spacing: 0;
-}
-
-.item-kind-icon {
-  width: 34px;
-  height: 34px;
-  justify-self: end;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  border-radius: 999px;
-  background: rgba(17, 25, 29, 0.05);
-  color: #6f7a81;
+  padding-left: 4px;
 }
 
 .item-body {
@@ -2412,7 +2396,7 @@ textarea {
 
   .brand-block strong {
     color: #050505;
-    font-size: clamp(28px, 9vw, 40px);
+    font-size: clamp(25px, 7.8vw, 34px);
     font-weight: 500;
     line-height: 1.05;
     max-width: 100%;
@@ -2774,36 +2758,8 @@ textarea {
     width: 100%;
   }
 
-  .item,
-  .item.compact {
-    grid-template-columns: 34px minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .item-kind {
-    padding-top: 0;
-  }
-
-  .item-kind:not(.item-kind-icon) {
-    width: 34px;
-    height: 34px;
-    overflow: hidden;
-    color: transparent;
-  }
-
-  .item-kind:not(.item-kind-icon)::before {
-    content: "";
-    display: block;
-    width: 8px;
-    height: 8px;
-    margin: 13px auto 0;
-    border-radius: 999px;
-    background: #d5d7d9;
-  }
-
-  .item-kind-icon {
-    justify-self: start;
-    background: #f4f4f4;
+  .item {
+    gap: 4px;
   }
 
   .item-body {
