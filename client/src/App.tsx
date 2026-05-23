@@ -17,6 +17,7 @@ import {
   LogOut,
   MessageSquarePlus,
   Minimize2,
+  MoreHorizontal,
   Paperclip,
   PauseCircle,
   Plug,
@@ -2472,11 +2473,27 @@ const ThreadItemView = memo(function ThreadItemView({
 }) {
   return (
     <article className={`item ${kindClass(item.type)} ${compact ? "compact" : ""}`}>
-      <div className="item-kind">{labelForKind(item.type)}</div>
+      <KindIndicator type={item.type} />
       <div className="item-body">{renderItemBody(item, cwd, onOpenFile)}</div>
     </article>
   );
 });
+
+function KindIndicator({ type }: { type: string }) {
+  const label = labelForKind(type);
+  if (isQuietItemKind(type)) {
+    return (
+      <div className="item-kind item-kind-icon" title={label} aria-label={label}>
+        <MoreHorizontal size={18} />
+      </div>
+    );
+  }
+  return <div className="item-kind">{label}</div>;
+}
+
+function isQuietItemKind(type: string): boolean {
+  return ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "reasoning"].includes(type);
+}
 
 function renderItemBody(item: ThreadItem, cwd: string | null, onOpenFile: (reference: FileReference) => Promise<void>) {
   if (item.type === "userMessage") {
@@ -3038,6 +3055,7 @@ const Composer = memo(function Composer({
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
   const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const draftPreviewRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
 
@@ -3046,6 +3064,10 @@ const Composer = memo(function Composer({
     setSubmissionNotice(null);
     setSubmittingAction(null);
     setSendChoiceText(null);
+  }, [deliveryKey]);
+
+  useEffect(() => {
+    updateDraftPreview();
   }, [deliveryKey]);
 
   useEffect(() => {
@@ -3134,6 +3156,7 @@ const Composer = memo(function Composer({
   function setDraftValue(value: string) {
     if (textareaRef.current) {
       textareaRef.current.value = value;
+      updateDraftPreview();
     }
   }
 
@@ -3151,6 +3174,21 @@ const Composer = memo(function Composer({
     const insertion = `${prefix}${value}${suffix}`;
     textarea.setRangeText(insertion, start, end, "end");
     textarea.focus();
+    updateDraftPreview();
+  }
+
+  function updateDraftPreview() {
+    renderComposerDraftPreview(draftPreviewRef.current, textareaRef.current?.value ?? "");
+    syncDraftPreviewScroll();
+  }
+
+  function syncDraftPreviewScroll() {
+    const preview = draftPreviewRef.current;
+    const textarea = textareaRef.current;
+    if (!preview || !textarea) {
+      return;
+    }
+    preview.scrollTop = textarea.scrollTop;
   }
 
   return (
@@ -3164,6 +3202,7 @@ const Composer = memo(function Composer({
           return;
         }
         await submitOrChooseActiveAction(message.text);
+        window.requestAnimationFrame(updateDraftPreview);
       }}
     >
       <div className="composer-top">
@@ -3195,13 +3234,19 @@ const Composer = memo(function Composer({
         </div>
       </div>
       <PromptInputBody className="composer-body">
-        <textarea
-          ref={textareaRef}
-          name="message"
-          rows={5}
-          placeholder="Send a new message or steer the active turn"
-          onKeyDown={(event) => void handleTextareaKeyDown(event)}
-        />
+        <div className="composer-rich-text">
+          <div className="composer-markdown-preview" ref={draftPreviewRef} aria-hidden="true" />
+          <textarea
+            className="composer-textarea-layer"
+            ref={textareaRef}
+            name="message"
+            rows={5}
+            placeholder="Send a new message or steer the active turn"
+            onInput={updateDraftPreview}
+            onKeyDown={(event) => void handleTextareaKeyDown(event)}
+            onScroll={syncDraftPreviewScroll}
+          />
+        </div>
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
         <PromptInputFooter className="composer-bottom">
           <PromptInputTools className="composer-actions">
@@ -3244,8 +3289,8 @@ const Composer = memo(function Composer({
             <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
             </button>
-            <PromptInputButton className="ghost-button" type="button" onClick={onArchive}>
-              <Archive size={16} /> {archiveLabel}
+            <PromptInputButton className="icon-button" type="button" onClick={onArchive} tooltip={archiveLabel} aria-label={archiveLabel}>
+              <Archive size={17} />
             </PromptInputButton>
           </PromptInputTools>
         </PromptInputFooter>
@@ -3262,6 +3307,45 @@ const Composer = memo(function Composer({
     </>
   );
 });
+
+function renderComposerDraftPreview(element: HTMLDivElement | null, value: string) {
+  if (!element) {
+    return;
+  }
+  element.replaceChildren();
+  if (!value) {
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  const pattern = /\[([^\]\n]{1,160})\]\(([^)\n]{1,700})\)/g;
+  let index = 0;
+  for (const match of value.matchAll(pattern)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    if (match.index > index) {
+      fragment.append(document.createTextNode(value.slice(index, match.index)));
+    }
+    const chip = document.createElement("span");
+    chip.className = "composer-link-chip";
+    chip.textContent = composerLinkLabel(match[1] || "", match[2] || "");
+    chip.title = match[2] || match[1] || "";
+    fragment.append(chip);
+    index = match.index + match[0].length;
+  }
+  if (index < value.length) {
+    fragment.append(document.createTextNode(value.slice(index)));
+  }
+  element.append(fragment);
+}
+
+function composerLinkLabel(label: string, href: string): string {
+  const cleanLabel = label.trim();
+  if (cleanLabel) {
+    return cleanLabel;
+  }
+  return labelForPath(href.trim());
+}
 
 function SendChoiceModal({
   disabled,
