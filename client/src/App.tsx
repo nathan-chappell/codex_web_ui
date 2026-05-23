@@ -1607,7 +1607,7 @@ export default function App({ initialThreadId = null }: AppProps) {
       }
       rememberOpenThread(result.thread, targetPaneIndex, false);
       rememberSessionPreview(result.thread);
-      rememberActiveTurn(result.thread);
+      reconcileActiveTurn(result.thread);
       if (ensureContextUsage) {
         ensureThreadContextUsageLoaded(result.thread, targetPaneIndex, loadToken);
       }
@@ -1626,7 +1626,7 @@ export default function App({ initialThreadId = null }: AppProps) {
       }
       rememberOpenThread(result.thread, paneIndex, false);
       rememberSessionPreview(result.thread);
-      rememberActiveTurn(result.thread);
+      reconcileActiveTurn(result.thread);
       setLoadedThreadIds((current) => new Set([...current, result.thread.id]));
       scheduleThreadRefresh(result.thread.id, 700);
       scheduleListRefresh(1000);
@@ -1977,10 +1977,14 @@ export default function App({ initialThreadId = null }: AppProps) {
     })));
   }
 
-  function rememberActiveTurn(thread: Thread) {
+  function reconcileActiveTurn(thread: Thread) {
     const turnId = activeTurnFromThread(thread);
     if (turnId) {
       setActiveTurns((current) => ({ ...current, [thread.id]: turnId }));
+      return;
+    }
+    if (isIdleThreadStatus(statusType(thread)) || threadHasFinalAnswer(thread)) {
+      clearActiveTurn(thread.id);
     }
   }
 
@@ -4766,11 +4770,30 @@ function isActiveTurnStatus(status: unknown): boolean {
   return value === "inprogress" || value === "active" || value === "running";
 }
 
+function isIdleThreadStatus(status: unknown): boolean {
+  const value = String(status ?? "").toLowerCase().replace(/[_\s-]+/g, "");
+  return value === "idle" || value === "completed" || value === "complete" || value === "finished";
+}
+
+function threadHasFinalAnswer(thread: Thread): boolean {
+  for (let turnIndex = (thread.turns?.length ?? 0) - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = thread.turns?.[turnIndex];
+    for (let itemIndex = (turn?.items?.length ?? 0) - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = turn?.items?.[itemIndex];
+      if (item && isFinalAnswerItem(item)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function isFinalAnswerItem(item: ThreadItem): boolean {
   const record = asRecord(item);
   const type = String(record.type ?? "").toLowerCase();
   const phase = String(record.phase ?? record.kind ?? record.category ?? "").toLowerCase().replace(/[_\s-]+/g, "");
-  return type === "agentmessage" && (phase === "finalanswer" || phase === "final");
+  const role = String(record.role ?? "").toLowerCase();
+  return (type === "agentmessage" || role === "assistant") && (phase === "finalanswer" || phase === "final" || phase === "finalresponse");
 }
 
 function userInputText(value: unknown): string {
