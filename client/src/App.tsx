@@ -168,6 +168,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [threadActionsOpen, setThreadActionsOpen] = useState(false);
+  const [statusRefreshing, setStatusRefreshing] = useState(false);
   const [settings, setSettings] = useState<UiSettings>({ ...defaultSettings });
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -503,11 +504,8 @@ export default function App({ initialThreadId = null }: AppProps) {
                   <input type="checkbox" checked={showArchived} onChange={(event) => switchArchiveFilter(event.target.checked)} />
                   <span>Archived</span>
                 </label>
-                <button type="button" role="menuitem" onClick={() => {
-                  setMobileMenuOpen(false);
-                  loadSessions();
-                }}>
-                  <RefreshCw size={16} /> Refresh
+                <button type="button" role="menuitem" disabled={sessionsLoading} onClick={() => void refreshSessionsFromMobileMenu()}>
+                  <RefreshCw size={16} className={sessionsLoading ? "spin-icon" : ""} /> Refresh
                 </button>
                 <button type="button" role="menuitem" onClick={() => {
                   setMobileMenuOpen(false);
@@ -601,11 +599,8 @@ export default function App({ initialThreadId = null }: AppProps) {
                       <input type="checkbox" checked={showArchived} onChange={(event) => switchArchiveFilter(event.target.checked)} />
                       <span>Archived</span>
                     </label>
-                    <button type="button" role="menuitem" onClick={() => {
-                      setThreadActionsOpen(false);
-                      loadSessions();
-                    }}>
-                      <RefreshCw size={16} /> Refresh
+                    <button type="button" role="menuitem" disabled={sessionsLoading} onClick={() => void refreshSessionsFromThreadMenu()}>
+                      <RefreshCw size={16} className={sessionsLoading ? "spin-icon" : ""} /> Refresh
                     </button>
                   </div>
                 )}
@@ -787,6 +782,7 @@ export default function App({ initialThreadId = null }: AppProps) {
           onClose={() => setStatusOpen(false)}
           onRecover={recoverAppServerFromUi}
           onRefreshMcp={reloadMcpServerStatus}
+          statusRefreshing={statusRefreshing}
           onRefresh={refreshStatus}
           onSaveMcpServer={saveMcpServerFromUi}
         />
@@ -892,12 +888,25 @@ export default function App({ initialThreadId = null }: AppProps) {
   }
 
   async function refreshStatus() {
+    setStatusRefreshing(true);
     try {
       setServerStatus(await getStatus());
       await loadRateLimits();
     } catch (error) {
       showToast(error);
+    } finally {
+      setStatusRefreshing(false);
     }
+  }
+
+  async function refreshSessionsFromMobileMenu() {
+    await loadSessions();
+    setMobileMenuOpen(false);
+  }
+
+  async function refreshSessionsFromThreadMenu() {
+    await loadSessions();
+    setThreadActionsOpen(false);
   }
 
   function handleHeaderTouchStart(event: TouchEvent<HTMLElement>) {
@@ -2314,6 +2323,7 @@ function StatusModal({
   mcpServers,
   rateLimits,
   status,
+  statusRefreshing,
   onClose,
   onRecover,
   onRefresh,
@@ -2325,6 +2335,7 @@ function StatusModal({
   mcpServers: McpServerList | null;
   rateLimits: RateLimitSnapshot | null;
   status: ServerStatus;
+  statusRefreshing: boolean;
   onClose: () => void;
   onRecover: () => Promise<void>;
   onRefresh: () => Promise<void>;
@@ -2380,7 +2391,7 @@ function StatusModal({
               <p className="muted">Config is written to {mcpServers?.configPath || "~/.codex/config.toml"} and reloaded without stopping the app-server.</p>
             </div>
             <button className="secondary-button" type="button" onClick={() => void onRefreshMcp()} disabled={mcpLoading}>
-              <RefreshCw size={16} /> Reload
+              <RefreshCw size={16} className={mcpLoading ? "spin-icon" : ""} /> Reload
             </button>
           </header>
           <div className="mcp-server-list">
@@ -2416,8 +2427,8 @@ function StatusModal({
           <button className="secondary-button" type="button" onClick={() => void onRecover()}>
             <RefreshCw size={16} /> Recover app-server
           </button>
-          <button className="primary-button" type="button" onClick={() => void onRefresh()}>
-            <RefreshCw size={16} /> Refresh
+          <button className="primary-button" type="button" onClick={() => void onRefresh()} disabled={statusRefreshing}>
+            <RefreshCw size={16} className={statusRefreshing ? "spin-icon" : ""} /> Refresh
           </button>
         </footer>
       </section>
@@ -3507,12 +3518,6 @@ const Composer = memo(function Composer({
                   }}>
                     <DollarSign size={16} /> Reference skill
                   </button>
-                  <button type="button" role="menuitem" disabled={!activeTurnId} onClick={() => {
-                    setComposerMenuOpen(false);
-                    onInterrupt();
-                  }}>
-                    <PauseCircle size={16} /> Interrupt
-                  </button>
                   <button type="button" role="menuitem" onClick={() => {
                     setComposerMenuOpen(false);
                     onFork();
@@ -3534,6 +3539,16 @@ const Composer = memo(function Composer({
                 </div>
               )}
             </div>
+            <PromptInputButton
+              className="icon-button interrupt-button"
+              type="button"
+              disabled={!activeTurnId}
+              onClick={onInterrupt}
+              tooltip="Interrupt active turn"
+              aria-label="Interrupt active turn"
+            >
+              <PauseCircle size={17} />
+            </PromptInputButton>
             <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
             </button>

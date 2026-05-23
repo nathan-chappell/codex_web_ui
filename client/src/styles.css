@@ -297,7 +297,7 @@ textarea {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(260px, var(--sidebar-width, 350px)) 1px minmax(0, 1fr);
+  grid-template-columns: minmax(260px, var(--sidebar-width, 350px)) 8px minmax(0, 1fr);
   min-height: 0;
   height: calc(100vh - 70px);
   background: #fff;
@@ -352,14 +352,14 @@ textarea {
 }
 
 .sidebar-resizer {
-  background: #eef0f1;
+  background: linear-gradient(90deg, transparent 0 3px, #e5e8e8 3px 5px, transparent 5px 100%);
   cursor: col-resize;
   min-height: 0;
 }
 
 .sidebar-resizer:hover,
 .sidebar-resizer:active {
-  background: var(--app-accent);
+  background: linear-gradient(90deg, transparent 0 2px, #111 2px 6px, transparent 6px 100%);
 }
 
 .panel-heading {
@@ -376,8 +376,9 @@ textarea {
 }
 
 .panel-actions > .icon-button:first-child {
-  background: #050505;
-  color: #fff;
+  border: 1px solid #dde2e2;
+  background: #fff;
+  color: #050505;
 }
 
 .panel-heading h2,
@@ -1736,6 +1737,12 @@ textarea {
   border: 1px solid #efc2c2;
 }
 
+.interrupt-button {
+  color: var(--red);
+  background: #fff;
+  border: 1px solid #f1d2d2;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -2408,7 +2415,7 @@ textarea {
 
 @media (max-width: 1120px) {
   .layout {
-    grid-template-columns: minmax(240px, var(--sidebar-width, 310px)) 6px minmax(0, 1fr);
+    grid-template-columns: minmax(240px, var(--sidebar-width, 310px)) 8px minmax(0, 1fr);
   }
 }
 
