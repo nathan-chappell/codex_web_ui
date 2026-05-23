@@ -1,18 +1,18 @@
 :root {
   color-scheme: light;
-  --bg: #f5f7f8;
+  --bg: #f7f8fa;
   --panel: #ffffff;
-  --panel-soft: #eef3f4;
-  --line: #d8e0e3;
-  --text: #172026;
-  --muted-text: #65727b;
+  --panel-soft: #eef5ff;
+  --line: #e7eaee;
+  --text: #15171a;
+  --muted-text: #777e87;
   --app-accent: #0c7c86;
   --app-accent-strong: #075d68;
   --green: #237a4b;
   --amber: #9a6400;
   --red: #b73535;
   --blue: #315f9f;
-  --shadow: 0 20px 48px rgba(14, 27, 33, 0.11);
+  --shadow: 0 18px 42px rgba(15, 23, 42, 0.1);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -97,7 +97,7 @@ textarea {
 .app-shell {
   height: 100vh;
   display: grid;
-  grid-template-rows: 70px auto 1fr;
+  grid-template-rows: 56px auto 1fr;
   overflow: hidden;
 }
 
@@ -106,7 +106,7 @@ textarea {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  padding: 0 24px;
+  padding: 0 18px;
   background: #fff;
   color: #050505;
   border-bottom: 1px solid #eef0f1;
@@ -154,8 +154,8 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: min(56vw, 780px);
-  font-size: 24px;
-  font-weight: 560;
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .brand-block span {
@@ -178,8 +178,8 @@ textarea {
 }
 
 .mark {
-  width: 42px;
-  height: 42px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
   background: #111820;
   display: grid;
@@ -299,7 +299,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(260px, var(--sidebar-width, 350px)) 8px minmax(0, 1fr);
   min-height: 0;
-  height: calc(100vh - 70px);
+  height: calc(100vh - 56px);
   background: #fff;
 }
 
@@ -346,7 +346,7 @@ textarea {
 }
 
 .sessions-panel {
-  background: #fff;
+  background: var(--panel-soft);
   display: grid;
   grid-template-rows: auto auto 1fr;
 }
@@ -499,7 +499,7 @@ textarea {
   justify-content: space-between;
   gap: 8px;
   padding: 7px 6px;
-  background: #fff;
+  background: color-mix(in srgb, var(--panel-soft) 92%, #fff);
   color: var(--muted-text);
   border-bottom: 0;
   cursor: pointer;
@@ -560,11 +560,11 @@ textarea {
 }
 
 .session-row:hover {
-  background: #f5f6f6;
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .session-row.selected {
-  background: #f3f3f3;
+  background: rgba(15, 23, 42, 0.08);
   border-color: transparent;
 }
 
@@ -821,13 +821,13 @@ textarea {
 
 .conversation {
   overflow: auto;
-  padding: 12px 18px 26px;
+  padding: 18px clamp(18px, 4vw, 54px) 26px;
   background: #fff;
 }
 
 .turn-block {
-  border-top: 1px solid var(--line);
-  padding: 16px 0;
+  border-top: 0;
+  padding: 14px 0;
 }
 
 .turn-block:first-child {
@@ -1009,20 +1009,25 @@ textarea {
 .item-body {
   min-width: 0;
   background: #fff;
-  border: 1px solid rgba(216, 224, 227, 0.82);
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: 14px;
   padding: 12px 13px;
   line-height: 1.45;
 }
 
 .item.user .item-body {
-  background: #f7fbff;
-  border-color: #c7d8ef;
+  width: fit-content;
+  max-width: min(720px, 88%);
+  margin-left: auto;
+  background: #f4f4f4;
+  border-color: #f4f4f4;
 }
 
 .item.agent .item-body {
-  background: #fbfffc;
-  border-color: #c7e1d2;
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .item.command .item-body {
@@ -1314,7 +1319,7 @@ textarea {
 .composer {
   border-top: 0;
   background: #fff;
-  padding: 10px 18px 16px;
+  padding: 10px clamp(18px, 4vw, 54px) 16px;
   display: grid;
   gap: 10px;
   overflow: hidden;
@@ -1334,10 +1339,11 @@ textarea {
   height: auto;
   align-items: stretch;
   overflow: visible;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
+  padding: 10px;
 }
 
 .composer.collapsed {
@@ -1467,7 +1473,7 @@ textarea {
 
 .composer textarea,
 .composer-markdown-preview {
-  border: 1px solid #dfe4e4;
+  border: 0;
   border-radius: 16px;
   background: #fff;
   color: var(--text);
@@ -1815,10 +1821,67 @@ textarea {
   width: min(420px, 100%);
 }
 
+.saved-drafts-modal {
+  width: min(640px, 100%);
+}
+
+.saved-draft-choice-modal {
+  width: min(440px, 100%);
+}
+
 .send-choice-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.saved-draft-list {
+  display: grid;
+  gap: 8px;
+}
+
+.saved-draft-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 6px;
+}
+
+.saved-draft-row > button:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.saved-draft-row > button:first-child:hover {
+  background: #f5f6f7;
+}
+
+.saved-draft-row strong,
+.saved-draft-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-draft-row strong {
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.saved-draft-row span {
+  color: var(--muted-text);
+  font-size: 12px;
 }
 
 .file-viewer-modal {

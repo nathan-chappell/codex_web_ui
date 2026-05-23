@@ -24,6 +24,7 @@ import {
   Plus,
   Radiation,
   RefreshCw,
+  Save,
   Search,
   Send,
   Trash2,
@@ -108,6 +109,11 @@ type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAme
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2;
 type ThreadPermissionOverride = Pick<UiSettings, "approvalPolicy" | "sandbox">;
+type SavedComposerDraft = {
+  id: string;
+  savedAt: number;
+  text: string;
+};
 type StoredLayout = {
   activePaneIndex?: number;
   mobilePane?: MobilePane;
@@ -121,6 +127,7 @@ type StoredLayout = {
 const THREAD_ITEM_BATCH_SIZE = 20;
 const SESSION_PAGE_SIZE = 50;
 const ACCOUNT_RATE_LIMIT_ID = "codex";
+const COMPOSER_SAVED_DRAFTS_KEY = "codex-web-ui-saved-composer-drafts-v1";
 const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
 const THREAD_PERMISSION_STORAGE_KEY = "codex-web-ui-thread-permissions-v1";
 const mobilePanes: MobilePane[] = ["sessions", "thread"];
@@ -3399,6 +3406,9 @@ const Composer = memo(function Composer({
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [savedDrafts, setSavedDrafts] = useState<SavedComposerDraft[]>(() => readSavedComposerDrafts());
+  const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
+  const [draftPasteChoice, setDraftPasteChoice] = useState<SavedComposerDraft | null>(null);
   const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerMenuRef = useRef<HTMLDivElement | null>(null);
@@ -3449,6 +3459,10 @@ const Composer = memo(function Composer({
     window.addEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
     return () => window.removeEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
   }, [composerMenuOpen]);
+
+  useEffect(() => {
+    writeSavedComposerDrafts(savedDrafts);
+  }, [savedDrafts]);
 
   async function submitDraft(action: ComposerAction, text?: string) {
     const draftText = text ?? readDraft();
@@ -3525,6 +3539,20 @@ const Composer = memo(function Composer({
     }
   }
 
+  function saveDraftForLater() {
+    const text = readDraft();
+    if (!text.trim()) {
+      return;
+    }
+    const draft: SavedComposerDraft = {
+      id: createLocalId(),
+      savedAt: Date.now(),
+      text
+    };
+    setSavedDrafts((current) => [draft, ...current].slice(0, 80));
+    setDraftValue("");
+  }
+
   function readDraft(): string {
     return textareaRef.current?.value ?? "";
   }
@@ -3551,6 +3579,30 @@ const Composer = memo(function Composer({
     textarea.setRangeText(insertion, start, end, "end");
     textarea.focus();
     updateDraftPreview();
+  }
+
+  function useSavedDraft(draft: SavedComposerDraft) {
+    if (readDraft().trim()) {
+      setSavedDraftsOpen(false);
+      setDraftPasteChoice(draft);
+      return;
+    }
+    pasteSavedDraft(draft, "overwrite");
+  }
+
+  function pasteSavedDraft(draft: SavedComposerDraft, mode: "insert" | "overwrite") {
+    setDraftPasteChoice(null);
+    setSavedDraftsOpen(false);
+    if (mode === "insert") {
+      insertDraftText(draft.text, { block: true });
+      return;
+    }
+    setDraftValue(draft.text);
+    textareaRef.current?.focus();
+  }
+
+  function deleteSavedDraft(draftId: string) {
+    setSavedDrafts((current) => current.filter((draft) => draft.id !== draftId));
   }
 
   function updateDraftPreview() {
@@ -3657,6 +3709,12 @@ const Composer = memo(function Composer({
                   </button>
                   <button type="button" role="menuitem" onClick={() => {
                     setComposerMenuOpen(false);
+                    setSavedDraftsOpen(true);
+                  }}>
+                    <Save size={16} /> Saved drafts
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => {
+                    setComposerMenuOpen(false);
                     onFork();
                   }}>
                     <GitFork size={16} /> Fork
@@ -3686,6 +3744,15 @@ const Composer = memo(function Composer({
             >
               <PauseCircle size={17} />
             </PromptInputButton>
+            <PromptInputButton
+              className="icon-button save-draft-button"
+              type="button"
+              onClick={saveDraftForLater}
+              tooltip="Save draft for later"
+              aria-label="Save draft for later"
+            >
+              <Save size={17} />
+            </PromptInputButton>
             <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
               <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
             </button>
@@ -3699,6 +3766,22 @@ const Composer = memo(function Composer({
         onClose={() => setSendChoiceText(null)}
         onEnqueue={() => void submitSendChoice("send")}
         onSteer={() => void submitSendChoice("steer")}
+      />
+    )}
+    {savedDraftsOpen && (
+      <SavedDraftsModal
+        drafts={savedDrafts}
+        onClose={() => setSavedDraftsOpen(false)}
+        onDelete={deleteSavedDraft}
+        onUse={useSavedDraft}
+      />
+    )}
+    {draftPasteChoice && (
+      <SavedDraftPasteChoiceModal
+        draft={draftPasteChoice}
+        onClose={() => setDraftPasteChoice(null)}
+        onInsert={() => pasteSavedDraft(draftPasteChoice, "insert")}
+        onOverwrite={() => pasteSavedDraft(draftPasteChoice, "overwrite")}
       />
     )}
     </>
@@ -3773,6 +3856,90 @@ function SendChoiceModal({
           </button>
           <button className="primary-button" type="button" onClick={onSteer} disabled={disabled}>
             <Send size={16} /> Steer active turn
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SavedDraftsModal({
+  drafts,
+  onClose,
+  onDelete,
+  onUse
+}: {
+  drafts: SavedComposerDraft[];
+  onClose: () => void;
+  onDelete: (draftId: string) => void;
+  onUse: (draft: SavedComposerDraft) => void;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal saved-drafts-modal" role="dialog" aria-modal="true" aria-labelledby="saved-drafts-title">
+        <header className="modal-header">
+          <div>
+            <h2 id="saved-drafts-title">Saved drafts</h2>
+            <p className="muted">{drafts.length ? `${drafts.length} saved` : "No saved drafts"}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+        {drafts.length > 0 ? (
+          <div className="saved-draft-list">
+            {drafts.map((draft) => (
+              <article className="saved-draft-row" key={draft.id}>
+                <button type="button" onClick={() => onUse(draft)}>
+                  <strong>{summarizeSavedDraft(draft.text)}</strong>
+                  <span>{formatSavedDraftDate(draft.savedAt)}</span>
+                </button>
+                <button className="icon-button" type="button" onClick={() => onDelete(draft.id)} title="Delete saved draft" aria-label="Delete saved draft">
+                  <Trash2 size={16} />
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state inline">
+            <h2>Nothing saved</h2>
+            <p>Use the disk button next to send to save composer text for later.</p>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function SavedDraftPasteChoiceModal({
+  draft,
+  onClose,
+  onInsert,
+  onOverwrite
+}: {
+  draft: SavedComposerDraft;
+  onClose: () => void;
+  onInsert: () => void;
+  onOverwrite: () => void;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal saved-draft-choice-modal" role="dialog" aria-modal="true" aria-labelledby="saved-draft-choice-title">
+        <header className="modal-header">
+          <div>
+            <h2 id="saved-draft-choice-title">Composer has text</h2>
+            <p className="muted">{summarizeSavedDraft(draft.text)}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="send-choice-actions">
+          <button className="secondary-button" type="button" onClick={onInsert}>
+            <Plus size={16} /> Insert
+          </button>
+          <button className="primary-button" type="button" onClick={onOverwrite}>
+            <Save size={16} /> Overwrite
           </button>
         </div>
       </section>
@@ -4216,6 +4383,65 @@ function readStoredLayout(): StoredLayout {
   } catch {
     return {};
   }
+}
+
+function readSavedComposerDrafts(): SavedComposerDraft[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(COMPOSER_SAVED_DRAFTS_KEY) || "[]");
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw
+      .map(parseSavedComposerDraft)
+      .filter((draft): draft is SavedComposerDraft => Boolean(draft))
+      .slice(0, 80);
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedComposerDrafts(drafts: SavedComposerDraft[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(COMPOSER_SAVED_DRAFTS_KEY, JSON.stringify(drafts.slice(0, 80)));
+  } catch {
+    // Saving drafts is optional; the composer still works without localStorage.
+  }
+}
+
+function parseSavedComposerDraft(value: unknown): SavedComposerDraft | null {
+  const record = asRecord(value);
+  const id = typeof record.id === "string" && record.id ? record.id : createLocalId();
+  const text = typeof record.text === "string" ? record.text : "";
+  const savedAt = numberValue(record.savedAt) ?? Date.now();
+  return text.trim() ? { id, savedAt, text } : null;
+}
+
+function summarizeSavedDraft(text: string): string {
+  const summary = text.replace(/\s+/g, " ").trim();
+  if (!summary) {
+    return "Empty draft";
+  }
+  return summary.length > 96 ? `${summary.slice(0, 95)}...` : summary;
+}
+
+function formatSavedDraftDate(savedAt: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(savedAt));
+}
+
+function createLocalId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function writeStoredLayout(layout: StoredLayout, timerRef?: RefObject<number | null>): void {
