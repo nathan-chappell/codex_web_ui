@@ -250,6 +250,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const resizingSidebarRef = useRef(false);
   const resizingThreadSplitRef = useRef(false);
   const layoutRef = useRef<HTMLElement | null>(null);
+  const sessionsListRef = useRef<HTMLDivElement | null>(null);
   const threadGridRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidthRef = useRef(sidebarWidth);
   const sidebarResizeFrameRef = useRef<number | null>(null);
@@ -439,6 +440,18 @@ export default function App({ initialThreadId = null }: AppProps) {
     : activeThread
       ? titleForThread(activeThread)
       : "Codex Web UI";
+
+  useEffect(() => {
+    if (mobilePane !== "sessions" || !selectedThreadId) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const selectedRow = [...(sessionsListRef.current?.querySelectorAll<HTMLElement>("[data-thread-id]") ?? [])]
+        .find((element) => element.dataset.threadId === selectedThreadId);
+      selectedRow?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 240);
+    return () => window.clearTimeout(timer);
+  }, [groupedThreads, mobilePane, selectedThreadId]);
   const selectionActive = selectedSessionIds.size > 0;
   const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
   const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
@@ -737,7 +750,7 @@ export default function App({ initialThreadId = null }: AppProps) {
               </div>
             )}
           </div>
-          <div className={`sessions-list ${selectionActive ? "selecting" : ""}`} onScroll={handleSessionsScroll}>
+          <div className={`sessions-list ${selectionActive ? "selecting" : ""}`} ref={sessionsListRef} onScroll={handleSessionsScroll}>
             {mergedSessions.length === 0 ? (
               <p className="muted empty-pad">No threads found.</p>
             ) : (
@@ -2247,7 +2260,15 @@ function ThreadProjectGroup({
   selectedThreadId: string | null;
   sessionPreviews: Record<string, string>;
 }) {
-  const [open, setOpen] = useState(false);
+  const containsSelectedThread = group.threads.some((thread) => thread.id === selectedThreadId);
+  const [open, setOpen] = useState(containsSelectedThread);
+
+  useEffect(() => {
+    if (containsSelectedThread) {
+      setOpen(true);
+    }
+  }, [containsSelectedThread]);
+
   return (
     <section className={`thread-group ${open ? "open" : ""}`}>
       <button
@@ -2265,6 +2286,7 @@ function ThreadProjectGroup({
             <button
               key={thread.id}
               type="button"
+              data-thread-id={thread.id}
               className={`session-row ${thread.id === selectedThreadId ? "selected" : ""} ${selectedSessionIds.has(thread.id) ? "multi-selected" : ""}`}
               aria-pressed={selectedSessionIds.has(thread.id)}
               onClick={(event) => onRowClick(event, thread.id)}

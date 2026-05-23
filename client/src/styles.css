@@ -2899,11 +2899,19 @@ textarea {
   }
 
   .layout {
-    display: block;
+    display: flex;
+    width: 200%;
     height: 100%;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
     touch-action: pan-x pan-y;
+    transform: translate3d(0, 0, 0);
+    transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+
+  .layout.mobile-pane-thread {
+    transform: translate3d(-50%, 0, 0);
   }
 
   .sidebar-resizer,
@@ -2913,14 +2921,12 @@ textarea {
 
   .sessions-panel,
   .thread-workspace {
-    display: none;
+    display: grid;
+    flex: 0 0 50%;
+    width: 50%;
     height: 100%;
     min-height: 0;
     overflow: hidden;
-  }
-
-  .mobile-pane-sessions .sessions-panel {
-    display: grid;
   }
 
   .sessions-panel .panel-heading > div:first-child,
@@ -2950,10 +2956,6 @@ textarea {
   .selection-tools .danger-button {
     min-height: 40px;
     border-radius: 999px;
-  }
-
-  .mobile-pane-thread .thread-workspace {
-    display: grid;
   }
 
   .thread-view-controls {
