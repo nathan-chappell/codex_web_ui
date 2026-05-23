@@ -1606,12 +1606,8 @@ textarea {
   display: none;
 }
 
-.composer textarea {
+.composer-lexical-input {
   min-height: 118px;
-}
-
-.composer textarea,
-.composer-markdown-preview {
   border: 0;
   border-radius: 16px;
   background: #fff;
@@ -1620,6 +1616,11 @@ textarea {
   font: inherit;
   letter-spacing: 0;
   tab-size: 2;
+  outline: none;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .composer-rich-text {
@@ -1627,36 +1628,14 @@ textarea {
   min-height: 118px;
 }
 
-.composer-markdown-preview,
-.composer-textarea-layer {
+.composer-lexical-placeholder {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  min-height: 118px;
-  white-space: pre-wrap;
-  overflow: auto;
-  overflow-wrap: anywhere;
-  line-height: 1.45;
-}
-
-.composer-markdown-preview {
-  pointer-events: none;
-  z-index: 1;
-}
-
-.composer-textarea-layer {
-  position: absolute;
-  z-index: 2;
-  background: transparent;
-  border-color: transparent;
-  color: var(--text);
-  caret-color: var(--text);
-}
-
-.composer-textarea-layer::placeholder {
+  top: 10px;
+  left: 12px;
   color: var(--muted-text);
   opacity: 0.72;
+  pointer-events: none;
+  user-select: none;
 }
 
 .composer-link-chip {
@@ -1671,6 +1650,15 @@ textarea {
   padding: 1px 8px;
   font-weight: 760;
   vertical-align: baseline;
+}
+
+.composer-link-chip-shell {
+  display: inline-flex;
+  vertical-align: baseline;
+}
+
+.composer-lexical-paragraph {
+  margin: 0;
 }
 
 .command-terminal {
@@ -3006,9 +2994,7 @@ textarea {
   }
 
   .composer-rich-text,
-  .composer textarea,
-  .composer-markdown-preview,
-  .composer-textarea-layer {
+  .composer-lexical-input {
     min-height: 92px;
   }
 

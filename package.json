@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.190",
+    "@lexical/react": "^0.44.0",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/code": "^1.1.1",
@@ -53,6 +54,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "lexical": "^0.44.0",
     "lucide-react": "^0.561.0",
     "motion": "^12.39.0",
     "nanoid": "^5.1.11",

@@ -32,7 +32,7 @@ import {
   X
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { Fragment, FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -96,6 +96,8 @@ import {
   uploadAttachment
 } from "./api";
 import type { AuthEventStream } from "./api";
+import { ComposerLexicalInput } from "./ComposerLexicalInput";
+import type { ComposerInputHandle, ComposerTrigger } from "./ComposerLexicalInput";
 import { FileExplorerModal, FileViewerLoadingModal, FileViewerModal } from "./filePanels";
 import type { AuthState, ClientRequest, FileExplorer, FileExplorerEntry, FilePreview, FileReference, JsonValue, McpServerList, McpServerStatus, PermissionPolicy, RateLimitSnapshot, RepositoryBrowser, ServerEvent, ServerStatus, SkillReference, Thread, ThreadItem, ThreadTokenUsage, TokenUsageBreakdown, Turn, UiSettings } from "./types";
 
@@ -108,7 +110,7 @@ const defaultSettings: UiSettings = {
 };
 
 type ComposerAction = "send" | "steer";
-type ComposerTriggerMenu = "@" | "$" | "/";
+type ComposerTriggerMenu = ComposerTrigger;
 type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAmendment" | "decline";
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2;
@@ -3931,11 +3933,10 @@ const Composer = memo(function Composer({
   const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const triggerMenuRef = useRef<HTMLDivElement | null>(null);
-  const draftPreviewRef = useRef<HTMLDivElement | null>(null);
+  const composerInputRef = useRef<ComposerInputHandle | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingStreamRef = useRef<MediaStream | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
   const submittingRef = useRef(false);
   const lastSubmissionRef = useRef<{ signature: string; at: number } | null>(null);
@@ -3948,10 +3949,6 @@ const Composer = memo(function Composer({
     setSubmittingAction(null);
     setTriggerMenuOpen(null);
     setSendChoiceText(null);
-  }, [deliveryKey]);
-
-  useEffect(() => {
-    updateDraftPreview();
   }, [deliveryKey]);
 
   useEffect(() => {
@@ -4033,27 +4030,6 @@ const Composer = memo(function Composer({
     const text = sendChoiceText;
     setSendChoiceText(null);
     await submitDraft(action, text ?? undefined);
-  }
-
-  async function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey) || event.nativeEvent.isComposing) {
-      return;
-    }
-    event.preventDefault();
-    if (collapsed || submittingAction) {
-      return;
-    }
-    await submitOrChooseActiveAction(readDraft());
-  }
-
-  function handleTextareaInput() {
-    updateDraftPreview();
-    const trigger = currentComposerTrigger();
-    if (trigger) {
-      setTriggerMenuOpen(trigger);
-    } else if (triggerMenuOpen) {
-      setTriggerMenuOpen(null);
-    }
   }
 
   async function handleAttachmentFile(file: File | undefined) {
@@ -4140,18 +4116,6 @@ const Composer = memo(function Composer({
     recordingStreamRef.current = null;
   }
 
-  function currentComposerTrigger(): ComposerTriggerMenu | null {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return null;
-    }
-    const cursor = textarea.selectionStart ?? textarea.value.length;
-    const beforeCursor = textarea.value.slice(0, cursor);
-    const match = /(?:^|\s)([@$/])$/.exec(beforeCursor);
-    const value = match?.[1];
-    return value === "@" || value === "$" || value === "/" ? value : null;
-  }
-
   function openReferenceFile() {
     setTriggerMenuOpen(null);
     onReferenceFile((entry) => {
@@ -4165,22 +4129,12 @@ const Composer = memo(function Composer({
   }
 
   function insertTriggerSelectionText(value: string, options: { block?: boolean } = {}) {
-    removeCurrentTriggerToken();
+    removeCurrentTriggerToken(triggerMenuOpen);
     insertDraftText(value, options);
   }
 
-  function removeCurrentTriggerToken() {
-    const textarea = textareaRef.current;
-    if (!textarea || !triggerMenuOpen) {
-      return;
-    }
-    const cursor = textarea.selectionStart ?? textarea.value.length;
-    const previous = textarea.value[cursor - 1];
-    if (previous !== triggerMenuOpen) {
-      return;
-    }
-    textarea.setRangeText("", cursor - 1, cursor, "end");
-    updateDraftPreview();
+  function removeCurrentTriggerToken(trigger: ComposerTriggerMenu | null) {
+    composerInputRef.current?.removeCurrentTriggerToken(trigger);
   }
 
   function saveDraftForLater() {
@@ -4198,31 +4152,15 @@ const Composer = memo(function Composer({
   }
 
   function readDraft(): string {
-    return textareaRef.current?.value ?? "";
+    return composerInputRef.current?.getValue() ?? "";
   }
 
   function setDraftValue(value: string) {
-    if (textareaRef.current) {
-      textareaRef.current.value = value;
-      updateDraftPreview();
-    }
+    composerInputRef.current?.setValue(value);
   }
 
   function insertDraftText(value: string, options: { block?: boolean } = {}) {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    const start = textarea.selectionStart ?? textarea.value.length;
-    const end = textarea.selectionEnd ?? start;
-    const before = textarea.value.slice(0, start);
-    const after = textarea.value.slice(end);
-    const prefix = options.block && before.trim() && !before.endsWith("\n") ? "\n" : before && !/[\s([{:]$/.test(before) ? " " : "";
-    const suffix = options.block && after.trim() && !after.startsWith("\n") ? "\n" : "";
-    const insertion = `${prefix}${value}${suffix}`;
-    textarea.setRangeText(insertion, start, end, "end");
-    textarea.focus();
-    updateDraftPreview();
+    composerInputRef.current?.insertText(value, options);
   }
 
   function useSavedDraft(draft: SavedComposerDraft) {
@@ -4242,25 +4180,11 @@ const Composer = memo(function Composer({
       return;
     }
     setDraftValue(draft.text);
-    textareaRef.current?.focus();
+    composerInputRef.current?.focus();
   }
 
   function deleteSavedDraft(draftId: string) {
     setSavedDrafts((current) => current.filter((draft) => draft.id !== draftId));
-  }
-
-  function updateDraftPreview() {
-    renderComposerDraftPreview(draftPreviewRef.current, textareaRef.current?.value ?? "");
-    syncDraftPreviewScroll();
-  }
-
-  function syncDraftPreviewScroll() {
-    const preview = draftPreviewRef.current;
-    const textarea = textareaRef.current;
-    if (!preview || !textarea) {
-      return;
-    }
-    preview.scrollTop = textarea.scrollTop;
   }
 
   return (
@@ -4269,12 +4193,11 @@ const Composer = memo(function Composer({
       className={`composer ${collapsed ? "collapsed" : ""}`}
       maxFiles={1}
       onError={(error) => onError(new Error(error.message))}
-      onSubmit={async (message) => {
+      onSubmit={async () => {
         if (collapsed) {
           return;
         }
-        await submitOrChooseActiveAction(message.text);
-        window.requestAnimationFrame(updateDraftPreview);
+        await submitOrChooseActiveAction(readDraft());
       }}
     >
       <div className="composer-top">
@@ -4295,18 +4218,13 @@ const Composer = memo(function Composer({
         </div>
       </div>
       <PromptInputBody className="composer-body">
-        <div className="composer-rich-text">
-          <div className="composer-markdown-preview" ref={draftPreviewRef} aria-hidden="true" />
-          <textarea
-            className="composer-textarea-layer"
-            ref={textareaRef}
-            name="message"
-            rows={5}
+        <div className="composer-rich-text" onFocus={() => setTriggerMenuOpen(null)}>
+          <ComposerLexicalInput
+            className="composer-lexical-input"
+            ref={composerInputRef}
             placeholder="Send a new message or steer the active turn"
-            onInput={handleTextareaInput}
-            onFocus={() => setTriggerMenuOpen(null)}
-            onKeyDown={(event) => void handleTextareaKeyDown(event)}
-            onScroll={syncDraftPreviewScroll}
+            onSubmit={() => void submitOrChooseActiveAction(readDraft())}
+            onTrigger={(trigger) => setTriggerMenuOpen(trigger)}
           />
         </div>
         <ComposerInputStatus action={submittingAction} notice={submissionNotice} pendingQueued={submittingAction === "send" && Boolean(activeTurnId)} />
@@ -4344,28 +4262,28 @@ const Composer = memo(function Composer({
                   {triggerMenuOpen === "/" && (
                     <>
                       <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken();
+                        removeCurrentTriggerToken(triggerMenuOpen);
                         setTriggerMenuOpen(null);
                         setSavedDraftsOpen(true);
                       }}>
                         <Save size={16} /> Saved drafts
                       </button>
                       <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken();
+                        removeCurrentTriggerToken(triggerMenuOpen);
                         setTriggerMenuOpen(null);
                         onFork();
                       }}>
                         <GitFork size={16} /> Fork
                       </button>
                       <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken();
+                        removeCurrentTriggerToken(triggerMenuOpen);
                         setTriggerMenuOpen(null);
                         onCompact();
                       }}>
                         <Minimize2 size={16} /> Compact
                       </button>
                       <button type="button" role="menuitem" onClick={() => {
-                        removeCurrentTriggerToken();
+                        removeCurrentTriggerToken(triggerMenuOpen);
                         setTriggerMenuOpen(null);
                         onArchive();
                       }}>
@@ -4406,7 +4324,7 @@ const Composer = memo(function Composer({
               >
                 <Save size={17} />
               </PromptInputButton>
-              <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="submit">
+              <button className={activeTurnId ? "queue-button" : "primary-button"} disabled={Boolean(submittingAction)} type="button" onClick={() => void submitOrChooseActiveAction(readDraft())}>
                 <Send size={16} /> {sendButtonLabel(activeTurnId, submittingAction)}
               </button>
             </div>
@@ -4441,45 +4359,6 @@ const Composer = memo(function Composer({
     </>
   );
 });
-
-function renderComposerDraftPreview(element: HTMLDivElement | null, value: string) {
-  if (!element) {
-    return;
-  }
-  element.replaceChildren();
-  if (!value) {
-    return;
-  }
-  const fragment = document.createDocumentFragment();
-  const pattern = /\[([^\]\n]{1,160})\]\(([^)\n]{1,700})\)/g;
-  let index = 0;
-  for (const match of value.matchAll(pattern)) {
-    if (match.index === undefined) {
-      continue;
-    }
-    if (match.index > index) {
-      fragment.append(document.createTextNode(value.slice(index, match.index)));
-    }
-    const chip = document.createElement("span");
-    chip.className = "composer-link-chip";
-    chip.textContent = composerLinkLabel(match[1] || "", match[2] || "");
-    chip.title = match[2] || match[1] || "";
-    fragment.append(chip);
-    index = match.index + match[0].length;
-  }
-  if (index < value.length) {
-    fragment.append(document.createTextNode(value.slice(index)));
-  }
-  element.append(fragment);
-}
-
-function composerLinkLabel(label: string, href: string): string {
-  const cleanLabel = label.trim();
-  if (cleanLabel) {
-    return cleanLabel;
-  }
-  return labelForPath(href.trim());
-}
 
 function SendChoiceModal({
   disabled,
