@@ -124,6 +124,7 @@ export async function readReferencedFile(reference: FileReference): Promise<File
 
 export async function fetchReferencedFileBlob(reference: FileReference, raw = false): Promise<Blob> {
   const response = await fetch(fileQueryUrl(raw ? "/api/files/raw" : "/api/files/download", reference), {
+    cache: "no-store",
     headers: authHeaders()
   });
   await assertResponse(response);
@@ -165,7 +166,7 @@ function fileQueryUrl(baseUrl: string, reference: FileReference): string {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: authHeaders() });
+  const response = await fetch(url, { cache: "no-store", headers: authHeaders() });
   return parseResponse<T>(response);
 }
 

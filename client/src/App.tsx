@@ -149,7 +149,6 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [sessions, setSessions] = useState<Thread[]>([]);
   const [loadedThreadIds, setLoadedThreadIds] = useState<Set<string>>(new Set());
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
   const [openThreadIds, setOpenThreadIds] = useState<(string | null)[]>(() => initialOpenThreadIds(initialStoredLayout));
   const [openThreads, setOpenThreads] = useState<Record<string, Thread>>({});
   const [activePaneIndex, setActivePaneIndex] = useState(() => initialActivePaneIndex(initialStoredLayout));
@@ -310,7 +309,6 @@ export default function App({ initialThreadId = null }: AppProps) {
     if (existingPaneIndex >= 0) {
       activatePane(existingPaneIndex);
       setSelectedThreadId(initialThreadId);
-      setSelectedThread(openThreadsRef.current[initialThreadId] ?? null);
       return;
     }
     if (threadPaneCount > 1 && openThreadIdsRef.current.some(Boolean)) {
@@ -343,7 +341,7 @@ export default function App({ initialThreadId = null }: AppProps) {
     [openThreadIds, threadPaneCount]
   );
   const activeThreadId = paneThreadIds[activePaneIndex] ?? null;
-  const activeThread = activeThreadId ? openThreads[activeThreadId] ?? selectedThread : null;
+  const activeThread = activeThreadId ? openThreads[activeThreadId] ?? null : null;
   const appTitle = isMobileViewport() && mobilePane === "sessions"
     ? "Codex Web UI"
     : activeThread
@@ -743,7 +741,7 @@ export default function App({ initialThreadId = null }: AppProps) {
                   onSendMessage={handleSendPaneMessage}
                   paneIndex={paneIndex}
                   thread={thread}
-                  tokenUsageByThreadId={threadTokenUsageById}
+                  tokenUsage={threadId ? threadTokenUsageById[threadId] ?? null : null}
                 />
               );
             })}
@@ -963,7 +961,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   }
 
   function defaultFileExplorerCwd(): string {
-    return selectedThread?.cwd || settings.cwd || serverStatus.cwd || "";
+    return activeThread?.cwd || settings.cwd || serverStatus.cwd || "";
   }
 
   function fileExplorerCacheKey(cwd: string, pathValue?: string | null): string {
@@ -1469,7 +1467,6 @@ export default function App({ initialThreadId = null }: AppProps) {
     }
     if (targetPaneIndex === activePaneIndexRef.current && openThreadIdsRef.current[targetPaneIndex] === thread.id) {
       setSelectedThreadId(thread.id);
-      setSelectedThread(rememberedThread);
     }
   }
 
@@ -1485,7 +1482,6 @@ export default function App({ initialThreadId = null }: AppProps) {
       }
       return next;
     });
-    setSelectedThread((current) => (current && closing.has(current.id) ? null : current));
     setSelectedThreadId((current) => (current && closing.has(current) ? null : current));
   }
 
@@ -1503,12 +1499,8 @@ export default function App({ initialThreadId = null }: AppProps) {
       }
     }
     setSelectedThreadId(threadId);
-    setSelectedThread(null);
     setMobilePane("thread");
-    const thread = await resumeThread(threadId, targetPaneIndex, loadToken);
-    if (thread && isThreadLoadCurrent(targetPaneIndex, loadToken)) {
-      setSelectedThread(thread);
-    }
+    await resumeThread(threadId, targetPaneIndex, loadToken);
     setLoadingThreadByPane((current) => {
       if (current[targetPaneIndex] !== threadId || !isThreadLoadCurrent(targetPaneIndex, loadToken)) {
         return current;
@@ -1623,7 +1615,6 @@ export default function App({ initialThreadId = null }: AppProps) {
     try {
       await rpc("thread/name/set", { threadId: thread.id, name: trimmed });
       setOpenThreads((current) => ({ ...current, [thread.id]: { ...thread, name: trimmed } }));
-      setSelectedThread((current) => (current?.id === thread.id ? { ...current, name: trimmed } : current));
       setSessions((current) => current.map((item) => (item.id === thread.id ? { ...item, name: trimmed } : item)));
       await readThread(thread.id);
       await loadSessions();
@@ -1672,7 +1663,6 @@ export default function App({ initialThreadId = null }: AppProps) {
           return next;
         });
         if (selectedThreadId === thread.id) {
-          setSelectedThread(null);
           setSelectedThreadId(null);
         }
       }
@@ -1831,7 +1821,6 @@ export default function App({ initialThreadId = null }: AppProps) {
       openThreadsRef.current = next;
       return next;
     });
-    setSelectedThread((current) => (current?.id === threadId ? updater(current) : current));
   }
 
   function applyAgentMessageDelta(threadId: string, turnId: string, itemId: string, delta: string) {
@@ -1864,7 +1853,6 @@ export default function App({ initialThreadId = null }: AppProps) {
   function applyThreadStatus(threadId: string, status: Thread["status"]) {
     setSessions((current) => current.map((thread) => (thread.id === threadId ? { ...thread, status } : thread)));
     setOpenThreads((current) => (current[threadId] ? { ...current, [threadId]: { ...current[threadId], status } } : current));
-    setSelectedThread((current) => (current?.id === threadId ? { ...current, status } : current));
   }
 
   function applyStartedItem(threadId: string, turnId: string, item: ThreadItem) {
@@ -1997,7 +1985,7 @@ const ThreadPane = memo(function ThreadPane({
   onSendMessage,
   paneIndex,
   thread,
-  tokenUsageByThreadId
+  tokenUsage
 }: {
   activeTurnId: string | null;
   archiveLabel: string;
@@ -2016,7 +2004,7 @@ const ThreadPane = memo(function ThreadPane({
   onSendMessage: (thread: Thread, paneIndex: number, text: string, action?: ComposerAction) => Promise<boolean>;
   paneIndex: number;
   thread: Thread | null;
-  tokenUsageByThreadId: Record<string, ThreadTokenUsage>;
+  tokenUsage: ThreadTokenUsage | null;
 }) {
   const [topHidden, setTopHidden] = useState(() => isMobileViewport());
   const [composerCollapsed, setComposerCollapsed] = useState(false);
@@ -2029,7 +2017,11 @@ const ThreadPane = memo(function ThreadPane({
   const pendingChromeStateRef = useRef<{ topHidden?: boolean; composerCollapsed?: boolean }>({});
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
-  const itemCount = useMemo(() => (thread?.turns ?? []).reduce((count, turn) => count + dedupeThreadItems(turn.items ?? []).length, 0), [thread?.turns]);
+  const itemCount = useMemo(() => countDisplayThreadItems(thread?.turns ?? []), [thread?.turns]);
+  const contextUsage = useMemo(
+    () => (thread ? mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsage) : null),
+    [thread, tokenUsage]
+  );
 
   useEffect(() => {
     return () => {
@@ -2198,7 +2190,7 @@ const ThreadPane = memo(function ThreadPane({
             onArchive={() => onArchiveThread(thread, paneIndex)}
             archiveLabel={archiveLabel}
             collapsed={composerCollapsed}
-            contextUsage={mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsageByThreadId[thread.id] ?? null)}
+            contextUsage={contextUsage}
             onError={onError}
             onCollapsedChange={handleComposerCollapsedChange}
             onReferenceFile={onReferenceFile}
@@ -2482,8 +2474,9 @@ const TurnHistory = memo(function TurnHistory({
 }) {
   const [visibleCount, setVisibleCount] = useState(THREAD_ITEM_BATCH_SIZE);
   const pendingScrollHeightRef = useRef<number | null>(null);
-  const totalItemCount = useMemo(() => turns.reduce((count, turn) => count + dedupeThreadItems(turn.items ?? []).length, 0), [turns]);
-  const visibleTurns = useMemo(() => visibleTurnsByItemCount(turns, visibleCount), [turns, visibleCount]);
+  const displayTurns = useMemo(() => dedupeTurnsForDisplay(turns), [turns]);
+  const totalItemCount = useMemo(() => countDisplayThreadItems(displayTurns), [displayTurns]);
+  const visibleTurns = useMemo(() => visibleTurnsByItemCount(displayTurns, visibleCount), [displayTurns, visibleCount]);
   const visibleItemCount = useMemo(() => visibleTurns.reduce((count, turn) => count + turn.items.length, 0), [visibleTurns]);
   const hiddenCount = Math.max(0, totalItemCount - visibleItemCount);
 
@@ -2541,12 +2534,16 @@ const TurnHistory = memo(function TurnHistory({
   );
 });
 
+function countDisplayThreadItems(turns: Turn[]): number {
+  return turns.reduce((count, turn) => count + (turn.items?.length ?? 0), 0);
+}
+
 function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: Turn; items: ThreadItem[] }[] {
   const selected: { turn: Turn; items: ThreadItem[] }[] = [];
   let remaining = visibleCount;
   for (let index = turns.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const turn = turns[index];
-    const items = dedupeThreadItems(turn?.items ?? []);
+    const items = turn?.items ?? [];
     if (items.length === 0) {
       continue;
     }
@@ -2557,25 +2554,39 @@ function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: T
   return selected;
 }
 
+function dedupeTurnsForDisplay(turns: Turn[]): Turn[] {
+  let changed = false;
+  const nextTurns = turns.map((turn) => {
+    const items = turn.items ?? [];
+    const nextItems = dedupeThreadItems(items);
+    if (nextItems === items) {
+      return turn;
+    }
+    changed = true;
+    return { ...turn, items: nextItems };
+  });
+  return changed ? nextTurns : turns;
+}
+
 function dedupeThreadItems(items: ThreadItem[]): ThreadItem[] {
   const seenIds = new Set<string>();
   const seenSignatures = new Set<string>();
-  const deduped: ThreadItem[] = [];
+  let deduped: ThreadItem[] | null = null;
   for (const item of items) {
-    if (seenIds.has(item.id)) {
-      continue;
-    }
+    const isDuplicateId = seenIds.has(item.id);
     const signature = threadItemContentSignature(item);
-    if (signature && seenSignatures.has(signature)) {
+    const isDuplicateSignature = Boolean(signature && seenSignatures.has(signature));
+    if (isDuplicateId || isDuplicateSignature) {
+      deduped ??= items.slice(0, seenIds.size);
       continue;
     }
     seenIds.add(item.id);
     if (signature) {
       seenSignatures.add(signature);
     }
-    deduped.push(item);
+    deduped?.push(item);
   }
-  return deduped;
+  return deduped ?? items;
 }
 
 function threadItemContentSignature(item: ThreadItem): string | null {
@@ -4305,7 +4316,7 @@ function parseRateLimitSnapshot(value: unknown): RateLimitSnapshot | null {
   };
 }
 
-function parseRateLimitWindow(value: unknown) {
+function parseRateLimitWindow(value: unknown): RateLimitSnapshot["primary"] {
   const record = asRecord(value);
   const usedPercent = numberValue(record.usedPercent);
   if (usedPercent === null) {
