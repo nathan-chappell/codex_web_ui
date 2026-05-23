@@ -2362,6 +2362,7 @@ const ThreadPane = memo(function ThreadPane({
   const pendingChromeStateRef = useRef<{ topHidden?: boolean; composerCollapsed?: boolean }>({});
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
+  const lastFinalAnswerCountRef = useRef(0);
   const autoScrollRef = useRef(true);
   const scrollFrameRef = useRef<number | null>(null);
   const itemCount = useMemo(() => countDisplayThreadItems(thread?.turns ?? []), [thread?.turns]);
@@ -2418,6 +2419,7 @@ const ThreadPane = memo(function ThreadPane({
     if (!thread) {
       lastThreadViewRef.current = "";
       lastItemCountRef.current = 0;
+      lastFinalAnswerCountRef.current = 0;
       autoScrollRef.current = true;
       composerManuallyCollapsedRef.current = false;
       setTopHiddenState(false);
@@ -2427,6 +2429,7 @@ const ThreadPane = memo(function ThreadPane({
     if (lastThreadViewRef.current !== thread.id) {
       lastThreadViewRef.current = thread.id;
       lastItemCountRef.current = itemCount;
+      lastFinalAnswerCountRef.current = countFinalAnswerItems(thread.turns ?? []);
       autoScrollRef.current = true;
       composerManuallyCollapsedRef.current = false;
       setTopHiddenState(isMobileViewport());
@@ -2437,6 +2440,11 @@ const ThreadPane = memo(function ThreadPane({
     if (itemCount > lastItemCountRef.current && autoScrollRef.current) {
       scrollToEnd("smooth");
     }
+    const finalAnswerCount = countFinalAnswerItems(thread.turns ?? []);
+    if (finalAnswerCount > lastFinalAnswerCountRef.current && !composerManuallyCollapsedRef.current) {
+      setComposerCollapsedState(false);
+    }
+    lastFinalAnswerCountRef.current = finalAnswerCount;
     lastItemCountRef.current = itemCount;
   }, [itemCount, thread]);
 
@@ -2507,8 +2515,10 @@ const ThreadPane = memo(function ThreadPane({
     applyScroll(Math.max(1, passes));
   }
 
-  function handleComposerCollapsedChange(collapsed: boolean) {
-    composerManuallyCollapsedRef.current = collapsed;
+  function handleComposerCollapsedChange(collapsed: boolean, options: { manual?: boolean } = {}) {
+    if (options.manual !== false) {
+      composerManuallyCollapsedRef.current = collapsed;
+    }
     setComposerCollapsedState(collapsed);
   }
 
@@ -2585,6 +2595,7 @@ const ThreadPane = memo(function ThreadPane({
           </div>
           <Composer
             activeTurnId={activeTurnId}
+            autoCollapseOnSubmit={!composerManuallyCollapsedRef.current}
             deliveryKey={thread.id}
             deliveryVersion={itemCount}
             onInterrupt={() => onInterruptThread(thread)}
@@ -3106,6 +3117,10 @@ function countDisplayThreadItems(turns: Turn[]): number {
   return turns.reduce((count, turn) => count + collateThreadItemsForDisplay(dedupeThreadItems(turn.items ?? [])).length, 0);
 }
 
+function countFinalAnswerItems(turns: Turn[]): number {
+  return turns.reduce((count, turn) => count + (turn.items ?? []).filter(isFinalAnswerItem).length, 0);
+}
+
 function visibleTurnsByItemCount(turns: Turn[], visibleCount: number): { turn: Turn; items: DisplayThreadItem[] }[] {
   const selected: { turn: Turn; items: DisplayThreadItem[] }[] = [];
   let remaining = visibleCount;
@@ -3573,6 +3588,8 @@ function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: T
               <span className="file-diff-meta">
                 <span>{change.kind}</span>
                 {change.movePath && <span>from {displayDiffPath(change.movePath)}</span>}
+                {change.stats.added > 0 && <span className="diff-stat add">+{change.stats.added}</span>}
+                {change.stats.removed > 0 && <span className="diff-stat remove">-{change.stats.removed}</span>}
               </span>
             )}
             title={(
@@ -3964,6 +3981,7 @@ function statusType(thread: Thread | null): string {
 const Composer = memo(function Composer({
   activeTurnId,
   archiveLabel,
+  autoCollapseOnSubmit,
   collapsed,
   contextUsage,
   deliveryKey,
@@ -3980,12 +3998,13 @@ const Composer = memo(function Composer({
 }: {
   activeTurnId: string | null;
   archiveLabel: string;
+  autoCollapseOnSubmit: boolean;
   collapsed: boolean;
   contextUsage: ThreadTokenUsage | null;
   deliveryKey: string;
   deliveryVersion: number;
   onArchive: () => void;
-  onCollapsedChange: (collapsed: boolean) => void;
+  onCollapsedChange: (collapsed: boolean, options?: { manual?: boolean }) => void;
   onError: (error: unknown) => void;
   onFork: () => void;
   onInterrupt: () => void;
@@ -4103,6 +4122,9 @@ const Composer = memo(function Composer({
       const sent = await onSend(draftText, action);
       if (sent) {
         setDraftValue("");
+        if (autoCollapseOnSubmit) {
+          onCollapsedChange(true, { manual: false });
+        }
         if (deliveryKeyRef.current !== deliveryKey) {
           return;
         }
