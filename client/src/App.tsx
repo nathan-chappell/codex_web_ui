@@ -2335,7 +2335,7 @@ const ThreadPane = memo(function ThreadPane({
   );
   const handleRenderedThreadItemsChange = useCallback(() => {
     if (autoScrollRef.current) {
-      scrollToEnd();
+      scrollToEnd("smooth");
     }
   }, []);
 
@@ -2364,11 +2364,11 @@ const ThreadPane = memo(function ThreadPane({
       composerManuallyCollapsedRef.current = false;
       setTopHiddenState(isMobileViewport());
       setComposerCollapsedState(false);
-      scrollToEnd();
+      scrollToEnd("instant");
       return;
     }
     if (itemCount > lastItemCountRef.current && autoScrollRef.current) {
-      scrollToEnd();
+      scrollToEnd("smooth");
     }
     lastItemCountRef.current = itemCount;
   }, [itemCount, thread]);
@@ -2411,14 +2411,14 @@ const ThreadPane = memo(function ThreadPane({
     }
   }
 
-  function scrollToEnd() {
+  function scrollToEnd(behavior: ScrollBehavior = "smooth") {
     autoScrollRef.current = true;
     window.requestAnimationFrame(() => {
       const element = conversationRef.current;
       if (!element) {
         return;
       }
-      element.scrollTop = element.scrollHeight;
+      element.scrollTo({ top: element.scrollHeight, behavior });
       conversationScrollTopRef.current = element.scrollTop;
       if (isMobileViewport()) {
         setTopHiddenState(true);
@@ -3196,7 +3196,9 @@ function reconcileThreadUpdate(incoming: Thread, existing: Thread | undefined): 
   }
   const existingTurns = new Map(existing.turns.map((turn) => [turn.id, turn]));
   const incomingIds = new Set(incoming.turns.map((turn) => turn.id));
-  const transientTurns = existing.turns.filter((turn) => !incomingIds.has(turn.id) && isTransientTurn(turn));
+  const transientTurns = shouldPreserveTransientTurns(incoming)
+    ? existing.turns.filter((turn) => !incomingIds.has(turn.id) && isTransientTurn(turn))
+    : [];
   return {
     ...incoming,
     turns: [
@@ -3227,7 +3229,17 @@ function reconcileTurnUpdate(incoming: Turn, existing: Turn | undefined): Turn {
 }
 
 function shouldPreserveTransientItems(incoming: Turn, existing: Turn): boolean {
+  if (turnHasFinalAnswer(incoming) || isCompletedTurnStatus(incoming.status)) {
+    return false;
+  }
   return isTransientTurn(incoming) || isTransientTurn(existing);
+}
+
+function shouldPreserveTransientTurns(incoming: Thread): boolean {
+  if (threadHasFinalAnswer(incoming) || isIdleThreadStatus(statusType(incoming))) {
+    return false;
+  }
+  return (incoming.turns ?? []).some((turn) => isTransientTurn(turn) || isActiveTurnStatus(turn.status));
 }
 
 function isTransientTurn(turn: Turn): boolean {
@@ -5065,6 +5077,11 @@ function isActiveTurnStatus(status: unknown): boolean {
   return value === "inprogress" || value === "active" || value === "running";
 }
 
+function isCompletedTurnStatus(status: unknown): boolean {
+  const value = String(status ?? "").toLowerCase().replace(/[_\s-]+/g, "");
+  return value === "completed" || value === "complete" || value === "finished" || value === "failed" || value === "interrupted";
+}
+
 function isIdleThreadStatus(status: unknown): boolean {
   const value = String(status ?? "").toLowerCase().replace(/[_\s-]+/g, "");
   return value === "idle" || value === "completed" || value === "complete" || value === "finished";
@@ -5081,6 +5098,10 @@ function threadHasFinalAnswer(thread: Thread): boolean {
     }
   }
   return false;
+}
+
+function turnHasFinalAnswer(turn: Turn): boolean {
+  return (turn.items ?? []).some(isFinalAnswerItem);
 }
 
 function isFinalAnswerItem(item: ThreadItem): boolean {
