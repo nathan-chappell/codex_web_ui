@@ -31,7 +31,7 @@ import {
   X
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, KeyboardEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -122,10 +122,12 @@ type StoredLayout = {
   showArchived?: boolean;
   sidebarWidth?: number;
   threadPaneCount?: ThreadPaneCount;
+  threadSplitRatio?: number;
 };
 
 const THREAD_ITEM_BATCH_SIZE = 20;
 const SESSION_PAGE_SIZE = 50;
+const THREAD_SPLIT_RESIZER_WIDTH = 8;
 const ACCOUNT_RATE_LIMIT_ID = "codex";
 const COMPOSER_SAVED_DRAFTS_KEY = "codex-web-ui-saved-composer-drafts-v1";
 const LAYOUT_STORAGE_KEY = "codex-web-ui-layout-v1";
@@ -165,6 +167,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
   const [sidebarWidth, setSidebarWidth] = useState(() => clampNumber(initialStoredLayout.sidebarWidth, 240, 520, 330));
+  const [threadSplitRatio, setThreadSplitRatio] = useState(() => clampNumber(initialStoredLayout.threadSplitRatio, 0.25, 0.75, 0.5));
   const [showArchived, setShowArchived] = useState(() => initialStoredLayout.showArchived ?? false);
   const [recentOnly, setRecentOnly] = useState(() => initialStoredLayout.recentOnly ?? false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -222,10 +225,15 @@ export default function App({ initialThreadId = null }: AppProps) {
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean; refreshEligible: boolean } | null>(null);
   const headerPullStartRef = useRef<{ x: number; y: number } | null>(null);
   const resizingSidebarRef = useRef(false);
+  const resizingThreadSplitRef = useRef(false);
   const layoutRef = useRef<HTMLElement | null>(null);
+  const threadGridRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidthRef = useRef(sidebarWidth);
   const sidebarResizeFrameRef = useRef<number | null>(null);
   const pendingSidebarWidthRef = useRef(sidebarWidth);
+  const threadSplitRatioRef = useRef(threadSplitRatio);
+  const threadSplitResizeFrameRef = useRef<number | null>(null);
+  const pendingThreadSplitRatioRef = useRef(threadSplitRatio);
   const layoutWriteTimerRef = useRef<number | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressActivatedRef = useRef(false);
@@ -271,6 +279,9 @@ export default function App({ initialThreadId = null }: AppProps) {
       }
       if (sidebarResizeFrameRef.current) {
         window.cancelAnimationFrame(sidebarResizeFrameRef.current);
+      }
+      if (threadSplitResizeFrameRef.current) {
+        window.cancelAnimationFrame(threadSplitResizeFrameRef.current);
       }
       clearSessionLongPress();
       clearSessionClickTimer();
@@ -411,15 +422,22 @@ export default function App({ initialThreadId = null }: AppProps) {
       recentOnly,
       showArchived,
       sidebarWidth,
-      threadPaneCount
+      threadPaneCount,
+      threadSplitRatio
     }, layoutWriteTimerRef);
-  }, [activePaneIndex, mobilePane, openThreadIds, recentOnly, showArchived, sidebarWidth, threadPaneCount]);
+  }, [activePaneIndex, mobilePane, openThreadIds, recentOnly, showArchived, sidebarWidth, threadPaneCount, threadSplitRatio]);
 
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
     pendingSidebarWidthRef.current = sidebarWidth;
     layoutRef.current?.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    threadSplitRatioRef.current = threadSplitRatio;
+    pendingThreadSplitRatioRef.current = threadSplitRatio;
+    updateThreadGridSplitVars(threadGridRef.current, threadSplitRatio);
+  }, [threadSplitRatio]);
 
   if (authenticated === null) {
     return <div className="boot">Loading</div>;
@@ -743,32 +761,68 @@ export default function App({ initialThreadId = null }: AppProps) {
               </button>
             ))}
           </div>
-          <div className="thread-grid">
+          <div
+            className="thread-grid"
+            ref={threadGridRef}
+            style={threadGridSplitStyle(threadSplitRatio)}
+          >
             {paneThreadIds.map((threadId, paneIndex) => {
               const thread = threadId ? openThreads[threadId] ?? null : null;
               const isLoadingThread = Boolean(threadId && loadingThreadByPane[paneIndex] === threadId && !thread);
               return (
-                <ThreadPane
-                  activeTurnId={thread ? activeTurnFromThread(thread) || activeTurns[thread.id] || null : null}
-                  archiveLabel={showArchived ? "Unarchive" : "Archive"}
-                  isActive={paneIndex === activePaneIndex}
-                  isLoading={isLoadingThread}
-                  key={paneIndex}
-                  onActivatePane={handleActivatePane}
-                  onArchiveThread={handleArchivePaneThread}
-                  onCompactThread={handleCompactPaneThread}
-                  onForkThread={handleForkPaneThread}
-                  onInterruptThread={handleInterruptPaneThread}
-                  onRenameThread={handleRenamePaneThread}
-                  onError={handlePaneError}
-                  onOpenFile={handleOpenFileReference}
-                  onReferenceFile={handleReferenceFile}
-                  onReferenceSkill={handleReferenceSkill}
-                  onSendMessage={handleSendPaneMessage}
-                  paneIndex={paneIndex}
-                  thread={thread}
-                  tokenUsage={threadId ? threadTokenUsageById[threadId] ?? null : null}
-                />
+                <Fragment key={paneIndex}>
+                  {threadPaneCount === 2 && paneIndex === 1 && (
+                    <div
+                      className="thread-split-resizer"
+                      role="separator"
+                      aria-label="Resize thread panes"
+                      aria-orientation="vertical"
+                      onPointerDown={(event) => {
+                        resizingThreadSplitRef.current = true;
+                        pendingThreadSplitRatioRef.current = threadSplitRatioRef.current;
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                      }}
+                      onPointerMove={(event) => {
+                        if (!resizingThreadSplitRef.current) {
+                          return;
+                        }
+                        const nextRatio = threadSplitRatioFromPointer(event.clientX);
+                        if (nextRatio !== null) {
+                          updateThreadSplitDuringResize(nextRatio);
+                        }
+                      }}
+                      onPointerUp={(event) => {
+                        resizingThreadSplitRef.current = false;
+                        setThreadSplitRatio(pendingThreadSplitRatioRef.current);
+                        event.currentTarget.releasePointerCapture(event.pointerId);
+                      }}
+                      onPointerCancel={() => {
+                        resizingThreadSplitRef.current = false;
+                        setThreadSplitRatio(pendingThreadSplitRatioRef.current);
+                      }}
+                    />
+                  )}
+                  <ThreadPane
+                    activeTurnId={thread ? activeTurnFromThread(thread) || activeTurns[thread.id] || null : null}
+                    archiveLabel={showArchived ? "Unarchive" : "Archive"}
+                    isActive={paneIndex === activePaneIndex}
+                    isLoading={isLoadingThread}
+                    onActivatePane={handleActivatePane}
+                    onArchiveThread={handleArchivePaneThread}
+                    onCompactThread={handleCompactPaneThread}
+                    onForkThread={handleForkPaneThread}
+                    onInterruptThread={handleInterruptPaneThread}
+                    onRenameThread={handleRenamePaneThread}
+                    onError={handlePaneError}
+                    onOpenFile={handleOpenFileReference}
+                    onReferenceFile={handleReferenceFile}
+                    onReferenceSkill={handleReferenceSkill}
+                    onSendMessage={handleSendPaneMessage}
+                    paneIndex={paneIndex}
+                    thread={thread}
+                    tokenUsage={threadId ? threadTokenUsageById[threadId] ?? null : null}
+                  />
+                </Fragment>
               );
             })}
           </div>
@@ -2004,6 +2058,45 @@ export default function App({ initialThreadId = null }: AppProps) {
       layoutRef.current?.style.setProperty("--sidebar-width", `${pendingSidebarWidthRef.current}px`);
     });
   }
+
+  function threadSplitRatioFromPointer(clientX: number): number | null {
+    const rect = threadGridRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= THREAD_SPLIT_RESIZER_WIDTH) {
+      return null;
+    }
+    const availableWidth = rect.width - THREAD_SPLIT_RESIZER_WIDTH;
+    return clampNumber((clientX - rect.left) / availableWidth, 0.25, 0.75, 0.5);
+  }
+
+  function updateThreadSplitDuringResize(ratio: number) {
+    pendingThreadSplitRatioRef.current = ratio;
+    if (threadSplitResizeFrameRef.current !== null) {
+      return;
+    }
+    threadSplitResizeFrameRef.current = window.requestAnimationFrame(() => {
+      threadSplitResizeFrameRef.current = null;
+      updateThreadGridSplitVars(threadGridRef.current, pendingThreadSplitRatioRef.current);
+    });
+  }
+}
+
+function threadGridSplitStyle(ratio: number): CSSProperties {
+  return {
+    "--thread-left-width": threadSplitWidthValue(ratio),
+    "--thread-right-width": threadSplitWidthValue(1 - ratio)
+  } as CSSProperties;
+}
+
+function updateThreadGridSplitVars(element: HTMLElement | null, ratio: number) {
+  if (!element) {
+    return;
+  }
+  element.style.setProperty("--thread-left-width", threadSplitWidthValue(ratio));
+  element.style.setProperty("--thread-right-width", threadSplitWidthValue(1 - ratio));
+}
+
+function threadSplitWidthValue(ratio: number): string {
+  return `calc(${(ratio * 100).toFixed(2)}% - ${(THREAD_SPLIT_RESIZER_WIDTH * ratio).toFixed(2)}px)`;
 }
 
 const ThreadPane = memo(function ThreadPane({
@@ -4490,7 +4583,8 @@ function writeStoredLayout(layout: StoredLayout, timerRef?: RefObject<number | n
       recentOnly: layout.recentOnly ?? false,
       showArchived: layout.showArchived ?? false,
       sidebarWidth: clampNumber(layout.sidebarWidth, 240, 520, 330),
-      threadPaneCount: layout.threadPaneCount
+      threadPaneCount: layout.threadPaneCount,
+      threadSplitRatio: clampNumber(layout.threadSplitRatio, 0.25, 0.75, 0.5)
     }));
   } catch {
     // Local storage is an optimization; the app still works without it.
@@ -4544,7 +4638,8 @@ function parseStoredLayout(value: unknown): StoredLayout {
     recentOnly: typeof record.recentOnly === "boolean" ? record.recentOnly : undefined,
     showArchived: typeof record.showArchived === "boolean" ? record.showArchived : undefined,
     sidebarWidth: numberValue(record.sidebarWidth) ?? undefined,
-    threadPaneCount
+    threadPaneCount,
+    threadSplitRatio: numberValue(record.threadSplitRatio) ?? undefined
   };
 }
 

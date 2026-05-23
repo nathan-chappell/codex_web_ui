@@ -362,6 +362,18 @@ textarea {
   background: linear-gradient(90deg, transparent 0 2px, #111 2px 6px, transparent 6px 100%);
 }
 
+.thread-split-resizer {
+  background: linear-gradient(90deg, transparent 0 3px, #e5e8e8 3px 5px, transparent 5px 100%);
+  cursor: col-resize;
+  min-height: 0;
+  touch-action: none;
+}
+
+.thread-split-resizer:hover,
+.thread-split-resizer:active {
+  background: linear-gradient(90deg, transparent 0 2px, #111 2px 6px, transparent 6px 100%);
+}
+
 .panel-heading {
   justify-content: space-between;
   padding: 18px 20px 12px;
@@ -694,7 +706,7 @@ textarea {
 }
 
 .panes-2 .thread-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, var(--thread-left-width, calc(50% - 4px))) 8px minmax(0, var(--thread-right-width, calc(50% - 4px)));
 }
 
 .thread-panel.active {
@@ -2653,7 +2665,8 @@ textarea {
     touch-action: pan-x pan-y;
   }
 
-  .sidebar-resizer {
+  .sidebar-resizer,
+  .thread-split-resizer {
     display: none;
   }
 
