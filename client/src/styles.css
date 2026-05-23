@@ -714,7 +714,7 @@ textarea {
   justify-content: flex-start;
   gap: 10px;
   padding: 8px 14px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
   background: var(--panel);
   max-height: 96px;
   opacity: 1;
@@ -1404,7 +1404,9 @@ textarea {
 }
 
 .composer-active-status {
-  color: #3d4a50;
+  --color-background: #ffbd3e;
+  --color-muted-foreground: #344147;
+  color: transparent;
   font-weight: 850;
 }
 

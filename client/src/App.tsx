@@ -2102,7 +2102,7 @@ const ThreadPane = memo(function ThreadPane({
           </div>
         ) : isLoading ? (
           <div className="thread-title-block empty">
-            <h2><Shimmer duration={1.4}>Loading thread</Shimmer></h2>
+            <h2><Shimmer as="span" duration={1.4}>Loading thread</Shimmer></h2>
           </div>
         ) : (
           <div className="thread-title-block empty">
@@ -2140,7 +2140,7 @@ const ThreadPane = memo(function ThreadPane({
         </>
       ) : (
         <div className="empty-state">
-          <h2>{isLoading ? <Shimmer duration={1.4}>Loading thread</Shimmer> : "Select a thread"}</h2>
+          <h2>{isLoading ? <Shimmer as="span" duration={1.4}>Loading thread</Shimmer> : "Select a thread"}</h2>
           {!isLoading && (
             <p>Choose an existing thread or start a new one.</p>
           )}
@@ -3344,7 +3344,7 @@ const Composer = memo(function Composer({
           </PromptInputButton>
         </div>
         <div className="composer-top-meta">
-          {activeTurnId ? <Shimmer className="composer-active-status" duration={1.3}>Active</Shimmer> : <span>Ready</span>}
+          {activeTurnId ? <Shimmer as="span" className="composer-active-status" duration={1.1}>Active</Shimmer> : <span>Ready</span>}
           <ContextUsageBadge usage={contextUsage} />
         </div>
       </div>
