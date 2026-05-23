@@ -17,27 +17,39 @@ The app is a Next.js App Router application with Tailwind, shadcn/ui, and AI Ele
 ```bash
 npm install
 npm run build
-npm start
+node ./bin/codex-web-ui.js init
+node ./bin/codex-web-ui.js doctor
+node ./bin/codex-web-ui.js
 ```
 
 Open `http://127.0.0.1:4545`.
+
+The normal startup command starts the Next.js server and also starts or recovers
+a detached `codex app-server` sidecar on a Unix socket. For npm installs, use
+the `codex-web-ui` binary instead of `node ./bin/codex-web-ui.js`.
 
 ## CLI
 
 The npm package exposes a `codex-web-ui` command:
 
 ```bash
+codex-web-ui init
+codex-web-ui doctor
+codex-web-ui
 codex-web-ui --help
 codex-web-ui --port 4545
 CODEX_WEB_UI_PASSWORD='change-me' codex-web-ui --host 0.0.0.0
 CODEX_WEB_UI_PASSWORD='change-me' codex-web-ui --host 0.0.0.0 --full-control
-codex-web-ui --app-server-socket "$PWD/tmp/codex-app-server.sock" --model gpt-5.5 --effort high
+codex-web-ui --app-server-socket ~/.codex-webgui/codex-app-server.sock --model gpt-5.5 --effort high
 codex-web-ui --config ./codex-webgui.json
 ```
 
 By default the CLI binds to `127.0.0.1:4545`. Binding to a non-loopback host
 requires `CODEX_WEB_UI_PASSWORD` or `--password`; this is intentional because
 the app can read local files through authenticated preview/download endpoints.
+If no password is configured on a loopback host, startup prints a temporary
+local password for that process. Run `codex-web-ui init` to create a stable
+password-backed config.
 
 For source or git installs, run `codex-web-ui --build` once if the package does
 not include a `.next` production build.
@@ -48,6 +60,11 @@ The CLI uses these directory defaults:
 - Codex cwd: the current working directory where `codex-web-ui` was launched.
 - Runtime data: `~/.codex-webgui/data`.
 - Uploads: `~/.codex-webgui/data/uploads`.
+- Managed app-server socket: `~/.codex-webgui/codex-app-server.sock`.
+
+`codex-web-ui doctor` checks the production build, Codex CLI availability and
+login status, auth setup, writable data directories, permission settings, and
+app-server socket. It does not start the Web UI.
 
 Useful CLI options:
 
@@ -55,7 +72,7 @@ Useful CLI options:
 codex-web-ui \
   --host 127.0.0.1 \
   --port 4545 \
-  --app-server-socket "$PWD/tmp/codex-app-server.sock" \
+  --app-server-socket ~/.codex-webgui/codex-app-server.sock \
   --cwd /path/to/project \
   --model gpt-5.5 \
   --effort high \
@@ -63,6 +80,11 @@ codex-web-ui \
   --sandbox workspace-write \
   --data-dir "$PWD/data"
 ```
+
+The main command manages the app-server sidecar by default. If you already run
+the official app-server yourself, pass `--external-app-server` with
+`--app-server-socket`; in that mode startup only connects to the socket and does
+not attempt recovery.
 
 Default permissions are intentionally conservative: `on-request` approval and
 `workspace-write` sandbox. `danger-full-access`, `on-failure`, and `never`
@@ -92,7 +114,8 @@ Example `codex-webgui.json`:
 {
   "host": "127.0.0.1",
   "port": 4545,
-  "appServerSocket": "./tmp/codex-app-server.sock",
+  "password": "change-me",
+  "appServerSocket": "~/.codex-webgui/codex-app-server.sock",
   "cwd": "/path/to/project",
   "model": "gpt-5.5",
   "reasoningEffort": "high",
@@ -137,8 +160,9 @@ The browser also stores the 4-hour bearer token and UI layout preferences in
 
 The server is protected by password auth. Login exchanges
 `CODEX_WEB_UI_PASSWORD` for a 4-hour bearer JWT stored by the browser in
-localStorage and sent as an `Authorization` header. With no password configured,
-login remains locked and API routes stay unauthorized.
+localStorage and sent as an `Authorization` header. With no password configured
+on a loopback host, the CLI generates and prints a temporary local password for
+that process. With no password on a non-loopback host, startup refuses to bind.
 
 For development, run Next directly:
 
@@ -148,8 +172,8 @@ npm run dev
 
 For the full local service, run the Codex app-server sidecar as a separate
 process. This keeps the Codex app-server out of npm lifecycle watchers and
-leaves PID/log files under `tmp/`. Next talks to the sidecar through the Unix
-socket in `CODEX_APP_SERVER_SOCKET`.
+leaves PID/log files beside the configured socket. Next talks to the sidecar
+through the Unix socket in `CODEX_APP_SERVER_SOCKET`.
 
 Start the sidecar:
 
@@ -163,7 +187,7 @@ Then build and run Next against that socket:
 ```bash
 kill "$(cat tmp/backend.pid)" 2>/dev/null || true
 npm run build
-CODEX_APP_SERVER_SOCKET="$PWD/tmp/codex-app-server.sock" CODEX_WEB_UI_PASSWORD='change-me' npm start
+CODEX_WEB_UI_PASSWORD='change-me' npm start
 ```
 
 Do not run `next build` while `next start` is serving the same `.next`
@@ -220,6 +244,7 @@ CODEX_MODEL=gpt-5.5 CODEX_REASONING_EFFORT=high npm start
 CODEX_WEB_UI_APPROVAL_POLICY=on-request CODEX_WEB_UI_SANDBOX=workspace-write npm start
 CODEX_WEB_UI_UNSAFE_PERMISSIONS=1 CODEX_WEB_UI_SANDBOX=danger-full-access npm start
 CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
+CODEX_WEB_UI_EXTERNAL_APP_SERVER=1 CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
 CODEX_WEB_UI_DATA_DIR=/path/to/logs npm start
 ```
 

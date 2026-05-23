@@ -3533,21 +3533,11 @@ function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: T
     );
   }
 
-  const totals = changes.reduce(
-    (current, change) => ({
-      added: current.added + change.stats.added,
-      removed: current.removed + change.stats.removed
-    }),
-    { added: 0, removed: 0 }
-  );
-
   return (
     <div className="file-change-view">
       <div className="file-change-summary">
         <span>{String(item.status ?? "changed")}</span>
         <strong>{changes.length} file{changes.length === 1 ? "" : "s"}</strong>
-        <span className="diff-stat add">+{totals.added}</span>
-        <span className="diff-stat remove">-{totals.removed}</span>
       </div>
       <div className="file-change-list">
         {changes.map((change, index) => (
@@ -3558,8 +3548,6 @@ function FileChangeView({ cwd, item, onOpenFile }: { cwd: string | null; item: T
               <span className="file-diff-meta">
                 <span>{change.kind}</span>
                 {change.movePath && <span>from {displayDiffPath(change.movePath)}</span>}
-                <span className="diff-stat add">+{change.stats.added}</span>
-                <span className="diff-stat remove">-{change.stats.removed}</span>
               </span>
             )}
             title={(

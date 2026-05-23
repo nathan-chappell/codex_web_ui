@@ -1386,8 +1386,8 @@ textarea {
 
 .markdown pre code {
   display: block;
-  background: #11191d;
-  color: #f3f6f6;
+  background: #f6f8fa;
+  color: #17242a;
   padding: 12px;
   min-width: max-content;
   overflow: visible;
@@ -1400,7 +1400,8 @@ textarea {
   overflow-y: auto;
   overscroll-behavior-x: contain;
   border-radius: 6px;
-  background: #11191d;
+  background: #f6f8fa;
+  border: 1px solid #e1e7eb;
 }
 
 .file-link-button {
@@ -1424,8 +1425,9 @@ textarea {
   margin: 10px 0 0;
   max-width: 100%;
   min-width: 0;
-  background: #11191d;
-  color: #f3f6f6;
+  background: #f6f8fa;
+  color: #17242a;
+  border: 1px solid #e1e7eb;
   border-radius: 6px;
   padding: 12px;
   max-height: 420px;
