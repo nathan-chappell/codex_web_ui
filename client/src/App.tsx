@@ -170,6 +170,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [activeTurns, setActiveTurns] = useState<Record<string, string>>({});
+  const [threadTokenUsageById, setThreadTokenUsageById] = useState<Record<string, ThreadTokenUsage>>({});
   const [rateLimits, setRateLimits] = useState<RateLimitSnapshot | null>(null);
   const [filePreviewCache, setFilePreviewCache] = useState<Record<string, FilePreview>>({});
   const [fileViewer, setFileViewer] = useState<{ reference: FileReference; file: FilePreview } | null>(null);
@@ -198,6 +199,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const activePaneIndexRef = useRef(activePaneIndex);
   const openThreadIdsRef = useRef<(string | null)[]>(openThreadIds);
   const openThreadsRef = useRef<Record<string, Thread>>({});
+  const threadTokenUsageByIdRef = useRef<Record<string, ThreadTokenUsage>>({});
   const threadPermissionOverridesRef = useRef<Record<string, ThreadPermissionOverride>>(threadPermissionOverrides);
   const restoredLayoutThreadsRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; paneSwipeBlocked: boolean; refreshEligible: boolean } | null>(null);
@@ -745,6 +747,7 @@ export default function App({ initialThreadId = null }: AppProps) {
                   paneIndex={paneIndex}
                   paneCount={threadPaneCount}
                   thread={thread}
+                  tokenUsageByThreadId={threadTokenUsageById}
                 />
               );
             })}
@@ -1350,11 +1353,33 @@ export default function App({ initialThreadId = null }: AppProps) {
     setOpenThreadIds(next);
   }
 
+  function rememberThreadTokenUsage(threadId: string, usage: ThreadTokenUsage | null): ThreadTokenUsage | null {
+    const merged = mergeThreadTokenUsage(usage, threadTokenUsageByIdRef.current[threadId] ?? null);
+    if (!merged) {
+      return null;
+    }
+    const previous = threadTokenUsageByIdRef.current[threadId] ?? null;
+    if (sameThreadTokenUsage(previous, merged)) {
+      return merged;
+    }
+    threadTokenUsageByIdRef.current = { ...threadTokenUsageByIdRef.current, [threadId]: merged };
+    setThreadTokenUsageById(threadTokenUsageByIdRef.current);
+    return merged;
+  }
+
   function rememberOpenThread(thread: Thread, paneIndex = activePaneIndexRef.current, assignPane = true) {
     const targetPaneIndex = Math.min(threadPaneCount - 1, Math.max(0, paneIndex));
     let rememberedThread = reconcileThreadUpdate(thread, openThreadsRef.current[thread.id]);
+    const rememberedUsage = rememberThreadTokenUsage(thread.id, threadTokenUsage(rememberedThread));
+    if (rememberedUsage) {
+      rememberedThread = { ...rememberedThread, tokenUsage: rememberedUsage };
+    }
     setOpenThreads((current) => {
       rememberedThread = reconcileThreadUpdate(thread, current[thread.id]);
+      const currentUsage = mergeThreadTokenUsage(threadTokenUsage(rememberedThread), threadTokenUsageByIdRef.current[thread.id] ?? null);
+      if (currentUsage) {
+        rememberedThread = { ...rememberedThread, tokenUsage: currentUsage };
+      }
       const next = { ...current, [thread.id]: rememberedThread };
       openThreadsRef.current = next;
       return next;
@@ -1662,7 +1687,8 @@ export default function App({ initialThreadId = null }: AppProps) {
     if (threadId && method === "thread/tokenUsage/updated") {
       const tokenUsage = parseThreadTokenUsage(params.tokenUsage ?? params.token_usage ?? params);
       if (tokenUsage) {
-        patchOpenThread(threadId, (thread) => ({ ...thread, tokenUsage: mergeThreadTokenUsage(tokenUsage, threadTokenUsage(thread)) ?? tokenUsage }));
+        const mergedUsage = rememberThreadTokenUsage(threadId, tokenUsage) ?? tokenUsage;
+        patchOpenThread(threadId, (thread) => ({ ...thread, tokenUsage: mergeThreadTokenUsage(mergedUsage, threadTokenUsage(thread)) ?? mergedUsage }));
       }
     }
     if (method === "serverRequest/resolved") {
@@ -1891,7 +1917,8 @@ const ThreadPane = memo(function ThreadPane({
   onSendMessage,
   paneIndex,
   paneCount,
-  thread
+  thread,
+  tokenUsageByThreadId
 }: {
   activeTurnId: string | null;
   allThreads: Thread[];
@@ -1911,6 +1938,7 @@ const ThreadPane = memo(function ThreadPane({
   paneIndex: number;
   paneCount: ThreadPaneCount;
   thread: Thread | null;
+  tokenUsageByThreadId: Record<string, ThreadTokenUsage>;
 }) {
   const [topHidden, setTopHidden] = useState(() => isMobileViewport());
   const [composerCollapsed, setComposerCollapsed] = useState(false);
@@ -2074,8 +2102,7 @@ const ThreadPane = memo(function ThreadPane({
           </div>
         ) : isLoading ? (
           <div className="thread-title-block empty">
-            <h2>Loading thread</h2>
-            <Shimmer className="muted" duration={1.4}>Fetching the selected thread.</Shimmer>
+            <h2><Shimmer duration={1.4}>Loading thread</Shimmer></h2>
           </div>
         ) : (
           <div className="thread-title-block empty">
@@ -2106,17 +2133,15 @@ const ThreadPane = memo(function ThreadPane({
             onArchive={() => onArchiveThread(thread, paneIndex)}
             archiveLabel={archiveLabel}
             collapsed={composerCollapsed}
-            contextUsage={threadTokenUsage(thread)}
+            contextUsage={mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsageByThreadId[thread.id] ?? null)}
             onError={onError}
             onCollapsedChange={handleComposerCollapsedChange}
           />
         </>
       ) : (
         <div className="empty-state">
-          <h2>{isLoading ? "Loading thread" : "Select a thread"}</h2>
-          {isLoading ? (
-            <Shimmer className="muted" duration={1.4}>Fetching the selected thread.</Shimmer>
-          ) : (
+          <h2>{isLoading ? <Shimmer duration={1.4}>Loading thread</Shimmer> : "Select a thread"}</h2>
+          {!isLoading && (
             <p>Choose an existing thread or start a new one.</p>
           )}
         </div>
@@ -3145,9 +3170,13 @@ const Composer = memo(function Composer({
   const draftPreviewRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const deliveryKeyRef = useRef(deliveryKey);
+  const submittingRef = useRef(false);
+  const lastSubmissionRef = useRef<{ signature: string; at: number } | null>(null);
 
   useEffect(() => {
     deliveryKeyRef.current = deliveryKey;
+    submittingRef.current = false;
+    lastSubmissionRef.current = null;
     setSubmissionNotice(null);
     setSubmittingAction(null);
     setComposerMenuOpen(false);
@@ -3172,23 +3201,32 @@ const Composer = memo(function Composer({
   }, [deliveryKey, deliveryVersion, submissionNotice]);
 
   async function submitDraft(action: ComposerAction, text?: string) {
-    if (submittingAction) {
+    const draftText = text ?? readDraft();
+    const trimmedText = draftText.trim();
+    const signature = `${deliveryKey}\u0000${action}\u0000${trimmedText}`;
+    const now = Date.now();
+    if (!trimmedText || submittingRef.current || (lastSubmissionRef.current?.signature === signature && now - lastSubmissionRef.current.at < 2500)) {
       return;
     }
     const queued = action === "send" && Boolean(activeTurnId);
     const baselineDeliveryVersion = deliveryVersion;
+    submittingRef.current = true;
+    lastSubmissionRef.current = { signature, at: now };
     setSubmissionNotice(null);
     setSubmittingAction(action);
     try {
-      const sent = await onSend(text ?? readDraft(), action);
+      const sent = await onSend(draftText, action);
       if (sent) {
         setDraftValue("");
         if (deliveryKeyRef.current !== deliveryKey) {
           return;
         }
         setSubmissionNotice({ action, queued, deliveryKey, deliveryVersion: baselineDeliveryVersion });
+      } else if (lastSubmissionRef.current?.signature === signature) {
+        lastSubmissionRef.current = null;
       }
     } finally {
+      submittingRef.current = false;
       setSubmittingAction(null);
     }
   }
@@ -4208,6 +4246,24 @@ function mergeThreadTokenUsage(next: ThreadTokenUsage | null, previous: ThreadTo
     };
   }
   return next;
+}
+
+function sameThreadTokenUsage(a: ThreadTokenUsage | null, b: ThreadTokenUsage | null): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b || a.modelContextWindow !== b.modelContextWindow) {
+    return false;
+  }
+  return sameTokenBreakdown(a.total, b.total) && sameTokenBreakdown(a.last, b.last);
+}
+
+function sameTokenBreakdown(a: TokenUsageBreakdown, b: TokenUsageBreakdown): boolean {
+  return a.totalTokens === b.totalTokens
+    && a.inputTokens === b.inputTokens
+    && a.cachedInputTokens === b.cachedInputTokens
+    && a.outputTokens === b.outputTokens
+    && a.reasoningOutputTokens === b.reasoningOutputTokens;
 }
 
 function parseTokenUsageBreakdown(value: unknown): TokenUsageBreakdown | null {
