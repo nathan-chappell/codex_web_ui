@@ -97,7 +97,7 @@ textarea {
 .app-shell {
   height: 100vh;
   display: grid;
-  grid-template-rows: 58px auto 1fr;
+  grid-template-rows: 70px auto 1fr;
   overflow: hidden;
 }
 
@@ -106,17 +106,17 @@ textarea {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  padding: 0 18px;
-  background: #11191d;
-  color: #f5f7f8;
-  border-bottom: 1px solid #2c383e;
+  padding: 0 24px;
+  background: #fff;
+  color: #050505;
+  border-bottom: 1px solid #eef0f1;
 }
 
 .auth-warning-mode .topbar {
-  border: 2px solid #d84b4b;
+  border: 2px solid #ef8d8d;
   border-left: 0;
   border-right: 0;
-  background: #1d1111;
+  background: #fff7f7;
 }
 
 .brand-block,
@@ -154,10 +154,12 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: min(56vw, 780px);
+  font-size: 24px;
+  font-weight: 560;
 }
 
 .brand-block span {
-  color: #aebbc2;
+  color: #74777a;
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -166,7 +168,7 @@ textarea {
 }
 
 .brand-block .auth-warning-text {
-  color: #ffb7b7;
+  color: #b73535;
   font-weight: 800;
   max-width: min(70vw, 980px);
 }
@@ -176,9 +178,9 @@ textarea {
 }
 
 .mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 6px;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
   background: #111820;
   display: grid;
   place-items: center;
@@ -281,8 +283,8 @@ textarea {
 .status-button {
   min-height: 36px;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #eef3f4;
+  border-radius: 999px;
+  background: #f6f6f6;
   color: var(--text);
   padding: 7px 10px;
   display: inline-flex;
@@ -295,9 +297,10 @@ textarea {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(240px, var(--sidebar-width, 330px)) 6px minmax(0, 1fr);
+  grid-template-columns: minmax(260px, var(--sidebar-width, 350px)) 1px minmax(0, 1fr);
   min-height: 0;
-  height: calc(100vh - 58px);
+  height: calc(100vh - 70px);
+  background: #fff;
 }
 
 .mobile-pane-tabs {
@@ -343,13 +346,13 @@ textarea {
 }
 
 .sessions-panel {
-  background: var(--panel);
+  background: #fff;
   display: grid;
   grid-template-rows: auto auto 1fr;
 }
 
 .sidebar-resizer {
-  background: var(--line);
+  background: #eef0f1;
   cursor: col-resize;
   min-height: 0;
 }
@@ -361,8 +364,8 @@ textarea {
 
 .panel-heading {
   justify-content: space-between;
-  padding: 16px;
-  border-bottom: 1px solid var(--line);
+  padding: 18px 20px 12px;
+  border-bottom: 0;
 }
 
 .panel-actions {
@@ -377,7 +380,8 @@ textarea {
 .modal-header h2,
 .empty-state h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 560;
 }
 
 .panel-heading span,
@@ -391,8 +395,8 @@ textarea {
 .session-tools {
   display: grid;
   gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 20px 14px;
+  border-bottom: 0;
 }
 
 .selection-tools {
@@ -483,10 +487,10 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 6px;
-  background: var(--panel);
+  padding: 7px 6px;
+  background: #fff;
   color: var(--muted-text);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
   cursor: pointer;
   font-size: 11px;
   text-transform: uppercase;
@@ -531,8 +535,8 @@ textarea {
   text-align: left;
   background: transparent;
   color: var(--text);
-  border-radius: 6px;
-  padding: 11px 10px;
+  border-radius: 14px;
+  padding: 12px 10px;
   cursor: pointer;
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
@@ -545,12 +549,12 @@ textarea {
 }
 
 .session-row:hover {
-  background: var(--panel-soft);
+  background: #f5f6f6;
 }
 
 .session-row.selected {
-  background: #e6f4f2;
-  border-color: #a9d8d4;
+  background: #f1f5f5;
+  border-color: #d7dfdf;
 }
 
 .session-row.multi-selected {
@@ -629,8 +633,8 @@ textarea {
 .thread-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  background: #fbfcfc;
-  border-left: 1px solid var(--line);
+  background: #fff;
+  border-left: 0;
   min-height: 0;
   transition: outline-color 180ms ease;
 }
@@ -646,32 +650,32 @@ textarea {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  padding: 8px 10px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  padding: 10px 14px;
+  background: #fff;
+  border-bottom: 0;
 }
 
 .thread-view-controls button {
-  min-width: 34px;
-  min-height: 30px;
-  border-radius: 6px;
-  background: #e7ecee;
-  color: var(--text);
+  min-width: 38px;
+  min-height: 34px;
+  border-radius: 999px;
+  background: #f4f5f5;
+  color: #0a0a0a;
   cursor: pointer;
   font-weight: 800;
 }
 
 .thread-view-controls button.selected,
 .secondary-button.selected {
-  background: #d8f0ee;
-  color: #064b54;
+  background: #050505;
+  color: #fff;
 }
 
 .thread-grid {
   min-height: 0;
   display: grid;
   gap: 1px;
-  background: var(--line);
+  background: #eef0f1;
 }
 
 .panes-1 .thread-grid {
@@ -683,7 +687,7 @@ textarea {
 }
 
 .thread-panel.active {
-  outline: 2px solid rgba(12, 124, 134, 0.4);
+  outline: 1px solid rgba(5, 5, 5, 0.12);
   outline-offset: -2px;
 }
 
@@ -717,9 +721,9 @@ textarea {
 .thread-header {
   justify-content: flex-start;
   gap: 10px;
-  padding: 8px 14px;
+  padding: 12px 18px 8px;
   border-bottom: 0;
-  background: var(--panel);
+  background: #fff;
   max-height: 96px;
   opacity: 1;
   overflow: hidden;
@@ -747,8 +751,10 @@ textarea {
 
 .thread-select {
   width: min(260px, 34%);
-  min-height: 32px;
-  padding: 5px 8px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #f7f8f8;
 }
 
 .thread-title-block p {
@@ -798,8 +804,8 @@ textarea {
   border-color: transparent;
   background: transparent;
   padding: 2px 0;
-  font-size: 18px;
-  font-weight: 850;
+  font-size: 19px;
+  font-weight: 560;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -812,7 +818,8 @@ textarea {
 
 .conversation {
   overflow: auto;
-  padding: 16px 18px 26px;
+  padding: 12px 18px 26px;
+  background: #fff;
 }
 
 .turn-block {
@@ -1304,9 +1311,9 @@ textarea {
 }
 
 .composer {
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  padding: 12px 16px 14px;
+  border-top: 0;
+  background: #fff;
+  padding: 10px 18px 16px;
   display: grid;
   gap: 10px;
   overflow: hidden;
@@ -1459,9 +1466,9 @@ textarea {
 
 .composer textarea,
 .composer-markdown-preview {
-  border: 1px solid var(--line);
+  border: 1px solid #dfe4e4;
   border-radius: 16px;
-  background: #f8f9f9;
+  background: #fff;
   color: var(--text);
   padding: 10px 12px;
 }
@@ -1661,14 +1668,23 @@ textarea {
 }
 
 .topbar .ghost-button {
-  color: #f5f7f8;
-  border-color: #3d4a50;
+  width: 42px;
+  min-width: 0;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #f6f6f6;
+  color: #0a0a0a;
 }
 
 .topbar .status-button {
-  background: transparent;
-  color: #f5f7f8;
-  border-color: #3d4a50;
+  min-height: 42px;
+  border: 0;
+  background: #f6f6f6;
+  color: #0a0a0a;
+  padding: 0 14px;
 }
 
 .topbar .status-button.disconnected {
@@ -1708,7 +1724,7 @@ textarea {
 .icon-button {
   width: 36px;
   padding: 0;
-  background: #e7ecee;
+  background: #f0f2f2;
   color: var(--text);
 }
 
