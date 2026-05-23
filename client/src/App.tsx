@@ -4,6 +4,7 @@ import {
   Activity,
   Archive,
   AtSign,
+  AudioWaveform,
   ChevronUp,
   ChevronsDown,
   ChevronsUp,
@@ -17,6 +18,7 @@ import {
   LogOut,
   MessageSquarePlus,
   Mic,
+  Minimize2,
   MoreHorizontal,
   Paperclip,
   PauseCircle,
@@ -108,17 +110,6 @@ const defaultSettings: UiSettings = {
   approvalPolicy: "on-request",
   sandbox: "workspace-write"
 };
-
-const codexSlashCommands = [
-  { command: "/help", description: "Show available Codex commands" },
-  { command: "/plan", description: "Ask Codex to make or update a plan" },
-  { command: "/status", description: "Show session status and usage" },
-  { command: "/compact", description: "Compact conversation context" },
-  { command: "/review", description: "Run a focused code review" },
-  { command: "/use", description: "Load a skill", needsArgument: true },
-  { command: "/clear", description: "Clear conversation history" },
-  { command: "/init", description: "Initialize project instructions" }
-] as const;
 
 type ComposerAction = "send" | "steer";
 type ComposerTriggerMenu = ComposerTrigger;
@@ -3993,11 +3984,13 @@ const Composer = memo(function Composer({
   const [submittingAction, setSubmittingAction] = useState<ComposerAction | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<{ action: ComposerAction; queued: boolean; deliveryKey: string; deliveryVersion: number } | null>(null);
   const [triggerMenuOpen, setTriggerMenuOpen] = useState<ComposerTriggerMenu | null>(null);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [savedDrafts, setSavedDrafts] = useState<SavedComposerDraft[]>(() => readSavedComposerDrafts());
   const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
   const [draftPasteChoice, setDraftPasteChoice] = useState<SavedComposerDraft | null>(null);
   const [sendChoiceText, setSendChoiceText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const composerMenuRef = useRef<HTMLDivElement | null>(null);
   const triggerMenuRef = useRef<HTMLDivElement | null>(null);
   const composerInputRef = useRef<ComposerInputHandle | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -4014,6 +4007,7 @@ const Composer = memo(function Composer({
     setSubmissionNotice(null);
     setSubmittingAction(null);
     setTriggerMenuOpen(null);
+    setComposerMenuOpen(false);
     setSendChoiceText(null);
   }, [deliveryKey]);
 
@@ -4044,6 +4038,21 @@ const Composer = memo(function Composer({
     window.addEventListener("pointerdown", closeTriggerMenuOnOutsidePointer);
     return () => window.removeEventListener("pointerdown", closeTriggerMenuOnOutsidePointer);
   }, [triggerMenuOpen]);
+
+  useEffect(() => {
+    if (!composerMenuOpen) {
+      return;
+    }
+    function closeComposerMenuOnOutsidePointer(event: globalThis.PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && composerMenuRef.current?.contains(target)) {
+        return;
+      }
+      setComposerMenuOpen(false);
+    }
+    window.addEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
+    return () => window.removeEventListener("pointerdown", closeComposerMenuOnOutsidePointer);
+  }, [composerMenuOpen]);
 
   useEffect(() => () => {
     stopRecordingStream();
@@ -4183,6 +4192,7 @@ const Composer = memo(function Composer({
   }
 
   function openReferenceFile() {
+    setComposerMenuOpen(false);
     setTriggerMenuOpen(null);
     onReferenceFile((entry) => {
       insertTriggerSelectionText(markdownFileReference(entry.name, entry.relativePath || entry.path), { block: true });
@@ -4190,20 +4200,18 @@ const Composer = memo(function Composer({
   }
 
   function openReferenceSkill() {
+    setComposerMenuOpen(false);
     setTriggerMenuOpen(null);
     onReferenceSkill((skill) => insertTriggerSelectionText(`$${skill.name}`));
   }
 
-  function insertSlashCommand(command: typeof codexSlashCommands[number]) {
-    removeCurrentTriggerToken(triggerMenuOpen);
-    setTriggerMenuOpen(null);
-    insertDraftText(`${command.command}${"needsArgument" in command && command.needsArgument ? " " : ""}`);
+  function runComposerMenuAction(action: () => void) {
+    setComposerMenuOpen(false);
+    action();
   }
 
-  function runSlashMenuAction(action: () => void) {
-    removeCurrentTriggerToken(triggerMenuOpen);
-    setTriggerMenuOpen(null);
-    action();
+  function insertComposerMenuText(value: string) {
+    runComposerMenuAction(() => insertDraftText(value));
   }
 
   function insertTriggerSelectionText(value: string, options: { block?: boolean } = {}) {
@@ -4325,6 +4333,42 @@ const Composer = memo(function Composer({
               >
                 <Paperclip size={17} />
               </PromptInputButton>
+              <div className="composer-overflow" ref={composerMenuRef}>
+                <PromptInputButton
+                  className="icon-button"
+                  type="button"
+                  aria-expanded={composerMenuOpen}
+                  aria-haspopup="menu"
+                  disabled={Boolean(submittingAction)}
+                  onClick={() => {
+                    setTriggerMenuOpen(null);
+                    setComposerMenuOpen((value) => !value);
+                  }}
+                  tooltip="Composer actions"
+                  aria-label="Composer actions"
+                >
+                  <MoreHorizontal size={17} />
+                </PromptInputButton>
+                {composerMenuOpen && (
+                  <div className="composer-overflow-menu" role="menu">
+                    <button type="button" role="menuitem" onClick={() => runComposerMenuAction(onOpenSettings)}>
+                      <Settings size={16} /> Settings
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => insertComposerMenuText("/compact")}>
+                      <Minimize2 size={16} /> Compact
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => runComposerMenuAction(onArchive)}>
+                      <Archive size={16} /> {archiveLabel}
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => runComposerMenuAction(() => setSavedDraftsOpen(true))}>
+                      <Save size={16} /> Drafts
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => runComposerMenuAction(onFork)}>
+                      <GitFork size={16} /> Fork
+                    </button>
+                  </div>
+                )}
+              </div>
               {triggerMenuOpen && (
                 <div className="composer-trigger-menu" role="menu">
                   {triggerMenuOpen === "@" && (
@@ -4336,40 +4380,6 @@ const Composer = memo(function Composer({
                     <button type="button" role="menuitem" disabled={Boolean(submittingAction)} onClick={openReferenceSkill}>
                       <DollarSign size={16} /> Reference skill
                     </button>
-                  )}
-                  {triggerMenuOpen === "/" && (
-                    <div className="composer-slash-menu">
-                      <div className="composer-menu-section-label">Codex</div>
-                      {codexSlashCommands.map((command) => (
-                        <button
-                          key={command.command}
-                          type="button"
-                          role="menuitem"
-                          disabled={Boolean(submittingAction)}
-                          onClick={() => insertSlashCommand(command)}
-                        >
-                          <span className="slash-command-name">{command.command}</span>
-                          <span className="slash-command-description">{command.description}</span>
-                        </button>
-                      ))}
-                      <div className="composer-menu-section-label">App</div>
-                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(onOpenSettings)}>
-                        <span className="slash-command-name"><Settings size={14} /> Settings</span>
-                        <span className="slash-command-description">Edit cwd, model, effort, and permissions</span>
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(onArchive)}>
-                        <span className="slash-command-name"><Archive size={14} /> {archiveLabel}</span>
-                        <span className="slash-command-description">{archiveLabel} this thread</span>
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(() => setSavedDraftsOpen(true))}>
-                        <span className="slash-command-name"><Save size={14} /> Drafts</span>
-                        <span className="slash-command-description">Open saved composer drafts</span>
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => runSlashMenuAction(onFork)}>
-                        <span className="slash-command-name"><GitFork size={14} /> Fork</span>
-                        <span className="slash-command-description">Create a new branch of this thread</span>
-                      </button>
-                    </div>
                   )}
                 </div>
               )}
@@ -4383,7 +4393,7 @@ const Composer = memo(function Composer({
                 tooltip={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
                 aria-label={recordingState === "recording" ? "Stop recording" : recordingState === "transcribing" ? "Transcribing" : "Start transcription"}
               >
-                <Mic size={17} />
+                {recordingState === "transcribing" ? <AudioWaveform className="transcription-waveform" size={17} /> : <Mic size={17} />}
               </PromptInputButton>
               <PromptInputButton
                 className="icon-button interrupt-button"

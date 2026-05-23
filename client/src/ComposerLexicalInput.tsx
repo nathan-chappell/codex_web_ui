@@ -28,7 +28,7 @@ import {
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { MutableRefObject, ReactNode } from "react";
 
-export type ComposerTrigger = "@" | "$" | "/";
+export type ComposerTrigger = "@" | "$";
 
 export type ComposerInputHandle = {
   focus: () => void;
@@ -379,9 +379,9 @@ function currentTriggerFromSelection(): ComposerTrigger | null {
     return null;
   }
   const value = node.getTextContent().slice(0, selection.anchor.offset);
-  const match = /(?:^|\s)([@$/])$/.exec(value);
+  const match = /(?:^|\s)([@$])$/.exec(value);
   const trigger = match?.[1];
-  return trigger === "@" || trigger === "$" || trigger === "/" ? trigger : null;
+  return trigger === "@" || trigger === "$" ? trigger : null;
 }
 
 function escapeMarkdownLinkLabel(value: string): string {

@@ -1620,7 +1620,7 @@ textarea {
   position: absolute;
   left: 0;
   z-index: 40;
-  width: min(320px, calc(100vw - 28px));
+  width: min(220px, calc(100vw - 28px));
   max-height: min(420px, 60vh);
   overflow-y: auto;
   border: 1px solid var(--line);
@@ -1645,47 +1645,6 @@ textarea {
   font-weight: 760;
 }
 
-.composer-slash-menu {
-  display: grid;
-  gap: 4px;
-}
-
-.composer-slash-menu button {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.slash-command-name {
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  font-weight: 850;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.slash-command-description {
-  color: var(--muted-text);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.composer-menu-section-label {
-  padding: 7px 8px 3px;
-  color: var(--muted-text);
-  font-size: 11px;
-  font-weight: 850;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.composer-menu-section-label:not(:first-child) {
-  border-top: 1px solid var(--line);
-  margin-top: 4px;
-}
-
 .composer-trigger-menu button:hover {
   background: #eef3f4;
 }
@@ -1696,8 +1655,15 @@ textarea {
   color: var(--red);
 }
 
-.mic-button.transcribing svg {
-  animation: spin 900ms linear infinite;
+.mic-button.transcribing {
+  background: #eef6f7;
+  border-color: #c9dde2;
+  color: #245a66;
+}
+
+.transcription-waveform {
+  animation: transcription-pulse 1.1s ease-in-out infinite;
+  transform-origin: center;
 }
 
 .composer-primary-actions {
@@ -2424,6 +2390,19 @@ textarea {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes transcription-pulse {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: scaleX(0.86);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleX(1.08);
   }
 }
 
