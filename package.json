@@ -3,9 +3,29 @@
   "version": "1.0.0",
   "private": false,
   "description": "Mobile-friendly web UI client for the official Codex app-server.",
+  "license": "MIT",
+  "homepage": "https://github.com/nathan-chappell/codex_web_ui#readme",
+  "bugs": {
+    "url": "https://github.com/nathan-chappell/codex_web_ui/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathan-chappell/codex_web_ui.git"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "web-ui",
+    "cli",
+    "nextjs",
+    "developer-tools"
+  ],
   "type": "module",
   "bin": {
     "codex-web-ui": "./bin/codex-web-ui.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "app",

@@ -12,7 +12,33 @@ official Linux Codex app exists.
 
 The app is a Next.js App Router application with Tailwind, shadcn/ui, and AI Elements components. UI routes live under `/threads` and `/thread/[threadId]`; API endpoints are implemented as Next route handlers under `/api`.
 
-## Run
+## Requirements
+
+- Node.js 20 or newer.
+- The official Codex CLI installed as `codex`.
+- A working Codex login; check with `codex login status`.
+
+## Install from npm
+
+```bash
+npm install -g codex-web-ui
+codex-web-ui init
+codex-web-ui doctor
+codex-web-ui
+```
+
+Open `http://127.0.0.1:4545`.
+
+The normal startup command starts the Next.js server and starts or recovers a
+detached `codex app-server` sidecar on a Unix socket. Run `codex-web-ui doctor`
+after install or upgrade to check the production build, Codex CLI availability,
+login status, auth setup, writable data directories, permission settings, and
+app-server socket.
+
+For source or git installs, run `codex-web-ui --build` once if the package does
+not include a `.next` production build.
+
+## Run from source
 
 ```bash
 npm install
@@ -24,9 +50,27 @@ node ./bin/codex-web-ui.js
 
 Open `http://127.0.0.1:4545`.
 
-The normal startup command starts the Next.js server and also starts or recovers
-a detached `codex app-server` sidecar on a Unix socket. For npm installs, use
-the `codex-web-ui` binary instead of `node ./bin/codex-web-ui.js`.
+## Container Image
+
+The repository includes a Dockerfile for users who prefer an isolated runtime
+over a global npm install:
+
+```bash
+docker build -t codex-web-ui .
+docker run --rm -it \
+  -p 4545:4545 \
+  -e CODEX_WEB_UI_PASSWORD='change-me' \
+  -e CODEX_WEB_UI_AUTH_SECRET='separate-token-signing-secret' \
+  -v "$HOME/.codex:/home/node/.codex" \
+  -v "$HOME/.codex-webgui:/home/node/.codex-webgui" \
+  -v "$PWD:/workspace" \
+  codex-web-ui --cwd /workspace
+```
+
+The image includes the official Codex CLI and stores Web UI runtime data under
+`/home/node/.codex-webgui`. Mount `~/.codex` if you want to reuse an existing
+Codex login. Do not bake passwords, OpenAI keys, tunnel tokens, or Codex
+credentials into the image.
 
 ## CLI
 
@@ -50,9 +94,6 @@ the app can read local files through authenticated preview/download endpoints.
 If no password is configured on a loopback host, startup prints a temporary
 local password for that process. Run `codex-web-ui init` to create a stable
 password-backed config.
-
-For source or git installs, run `codex-web-ui --build` once if the package does
-not include a `.next` production build.
 
 The CLI uses these directory defaults:
 
@@ -146,6 +187,32 @@ Codex received its approval policy when that turn started.
 Prefer `CODEX_WEB_UI_PASSWORD` and `CODEX_WEB_UI_AUTH_SECRET` environment
 variables for secrets instead of storing them in the config file.
 
+## Security and Tunnels
+
+Treat the Web UI as local developer tooling, not as a hardened public service.
+Authenticated users can start Codex turns, browse and download files visible to
+the configured Codex cwd, upload attachments, and approve actions according to
+the configured Codex approval and sandbox policy.
+
+Before binding to `0.0.0.0`, using a LAN address, or exposing the port through
+ngrok, cloudflared, a reverse proxy, or another tunnel:
+
+- Set a strong `CODEX_WEB_UI_PASSWORD`.
+- Set a separate random `CODEX_WEB_UI_AUTH_SECRET` so JWT signing does not
+  depend on the password value.
+- Keep `CODEX_WEB_UI_ALLOWED_ORIGINS` limited to the exact local, LAN, or
+  tunnel origins you use.
+- Prefer HTTPS for any non-localhost access. Browser microphone and
+  screen-capture permissions require HTTPS, localhost, or another secure browser
+  context, and remote MCP OAuth login generally needs an HTTPS Web UI origin.
+- Avoid `--full-control`, `--unsafe-permissions`, `danger-full-access`, and
+  `approvalPolicy=never` unless the server is only reachable by people who
+  should have command execution access to the selected workspace.
+
+The password gate is intentionally simple and server-side. For real internet
+exposure, put this behind HTTPS, use strong secrets, and restrict allowed
+origins to origins you actually use.
+
 ## Persistence
 
 The server writes:
@@ -154,6 +221,8 @@ The server writes:
 - `sessions/<thread-id>.jsonl` under `CODEX_WEB_UI_DATA_DIR`.
 - `sessions.json` under `CODEX_WEB_UI_DATA_DIR`.
 - Uploaded files under `CODEX_WEB_UI_UPLOAD_DIR`.
+- A managed app-server socket at `CODEX_APP_SERVER_SOCKET`.
+- Managed app-server PID and log files beside the socket.
 
 The browser also stores the 4-hour bearer token and UI layout preferences in
 `localStorage`.
@@ -163,6 +232,35 @@ The server is protected by password auth. Login exchanges
 localStorage and sent as an `Authorization` header. With no password configured
 on a loopback host, the CLI generates and prints a temporary local password for
 that process. With no password on a non-loopback host, startup refuses to bind.
+
+Default npm install paths are:
+
+- Config: `~/.codex-webgui/config.json`.
+- Runtime data: `~/.codex-webgui/data`.
+- Uploads: `~/.codex-webgui/data/uploads`.
+- App-server socket: `~/.codex-webgui/codex-app-server.sock`.
+- App-server PID/log files: `~/.codex-webgui/codex-app-server.pid` and
+  `~/.codex-webgui/codex-app-server.log`.
+
+To stop the managed sidecar and remove Codex Web UI runtime files:
+
+```bash
+codex-web-ui app-server stop
+rm -rf ~/.codex-webgui/data
+rm -f ~/.codex-webgui/codex-app-server.sock ~/.codex-webgui/codex-app-server.pid ~/.codex-webgui/codex-app-server.log
+```
+
+To remove the starter config as well:
+
+```bash
+rm -f ~/.codex-webgui/config.json ~/.codex-webgui/codex-webgui.json
+rmdir ~/.codex-webgui 2>/dev/null || true
+```
+
+These cleanup commands do not remove `~/.codex`, Codex login credentials,
+Codex's own session history, or files in your project workspaces. Clear the
+browser's site data for the Web UI origin to remove the localStorage token,
+layout preferences, saved drafts, and per-thread permission overrides.
 
 For development, run Next directly:
 
@@ -231,10 +329,6 @@ To expose the running server through ngrok:
 ngrok http 4545
 ```
 
-Set a strong `CODEX_WEB_UI_PASSWORD` and `CODEX_WEB_UI_AUTH_SECRET` before
-exposing the server to the internet. Browser microphone and screen-capture
-permissions require HTTPS, localhost, or another secure browser context.
-
 Useful environment variables:
 
 ```bash
@@ -265,5 +359,3 @@ Next loads `.env` from the project root before reading these variables. Shell en
 - Uploads file attachments and inserts uploaded paths into the composer.
 - Previews referenced text, code, Markdown, JSON, images, PDFs, and browser-playable video files.
 - Shows app-server status and account rate-limit usage.
-
-The password gate is intentionally simple and server-side. For real internet exposure, put this behind HTTPS, set a strong `CODEX_WEB_UI_PASSWORD`, and restrict `CODEX_WEB_UI_ALLOWED_ORIGINS` to origins you actually use.
