@@ -22,5 +22,5 @@ USER node
 EXPOSE 4545
 VOLUME ["/home/node/.codex", "/home/node/.codex-webgui"]
 
-ENTRYPOINT ["codex-web-ui"]
+ENTRYPOINT ["codex-web-ui-docker-entrypoint"]
 CMD ["--host", "0.0.0.0"]

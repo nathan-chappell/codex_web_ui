@@ -1,6 +1,6 @@
 {
   "name": "@nchappell/codex-web-ui",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": false,
   "description": "Mobile-friendly web UI client for the official Codex app-server.",
   "license": "MIT",
@@ -22,7 +22,8 @@
   ],
   "type": "module",
   "bin": {
-    "codex-web-ui": "bin/codex-web-ui.js"
+    "codex-web-ui": "bin/codex-web-ui.js",
+    "codex-web-ui-docker-entrypoint": "bin/docker-entrypoint.sh"
   },
   "publishConfig": {
     "access": "public"

@@ -31,7 +31,6 @@ const protectedRoutes: Array<{ method: string; path: string; body?: unknown }> =
   { method: "GET", path: "/api/files/explore" },
   { method: "GET", path: "/api/skills" },
   { method: "POST", path: "/api/server/restart", body: {} },
-  { method: "POST", path: "/api/app-server/recover", body: {} },
   { method: "POST", path: "/api/server/stop", body: {} },
   { method: "GET", path: "/api/repositories/browse" },
   { method: "POST", path: "/api/repositories/create", body: { parentPath: process.cwd(), name: "repo" } },

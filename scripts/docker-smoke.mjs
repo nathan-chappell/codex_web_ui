@@ -60,10 +60,7 @@ try {
     "--host",
     "0.0.0.0",
     "--cwd",
-    "/workspace",
-    "--external-app-server",
-    "--app-server-socket",
-    "/home/node/.codex-webgui/missing.sock"
+    "/workspace"
   ], { label: "starting container" });
 
   await waitForHttp(`http://127.0.0.1:${port}/threads`);

@@ -23,17 +23,18 @@ The app is a Next.js App Router application with Tailwind, shadcn/ui, and AI Ele
 ```bash
 npm install -g @nchappell/codex-web-ui
 codex-web-ui init
+codex-web-ui app-server start
 codex-web-ui doctor
 codex-web-ui
 ```
 
 Open `http://127.0.0.1:4545`.
 
-The normal startup command starts the Next.js server and starts or recovers a
-detached `codex app-server` sidecar on a Unix socket. Run `codex-web-ui doctor`
-after install or upgrade to check the production build, Codex CLI availability,
-login status, auth setup, writable data directories, permission settings, and
-app-server socket.
+The normal startup command starts only the Next.js server. The detached
+`codex app-server` sidecar must already be running and websocket-ready on the
+configured Unix socket. Run `codex-web-ui doctor` after install or upgrade to
+check the production build, Codex CLI availability, login status, auth setup,
+writable data directories, permission settings, and app-server socket.
 
 For source or git installs, run `codex-web-ui --build` once if the package does
 not include a `.next` production build.
@@ -81,8 +82,9 @@ npm run test:docker
 ```
 
 The Docker smoke builds `codex-web-ui:smoke`, starts it on port `4555` with a
-temporary data directory and `--external-app-server`, verifies `/threads`,
-`/api/auth`, and password login, then removes the container and temp volumes.
+temporary data directory, verifies `/threads`, `/api/auth`, and password login,
+then removes the container and temp volumes. The container entrypoint starts the
+sidecar before launching the web process.
 By default it builds with `@nchappell/codex-web-ui@<package.json version>` from
 npm. Set `CODEX_WEB_UI_DOCKER_NPM_SPEC=@nchappell/codex-web-ui@latest` or
 another npm package spec to test a different published package,
@@ -152,10 +154,10 @@ codex-web-ui \
   --data-dir "$PWD/data"
 ```
 
-The main command manages the app-server sidecar by default. If you already run
-the official app-server yourself, pass `--external-app-server` with
-`--app-server-socket`; in that mode startup only connects to the socket and does
-not attempt recovery.
+The main command does not manage the app-server sidecar. Start it explicitly
+with `codex-web-ui app-server start`, or run the official app-server yourself
+and point `--app-server-socket` at that Unix socket. Startup fails fast if the
+socket is not websocket-ready.
 
 Default permissions are intentionally conservative: `on-request` approval and
 `workspace-write` sandbox. `danger-full-access`, `on-failure`, and `never`

@@ -85,7 +85,6 @@ import {
   logout,
   openEventStream,
   readReferencedFile,
-  recoverAppServer,
   reloadMcpServers,
   respondClientRequest,
   restartServer,
@@ -896,7 +895,6 @@ export default function App({ initialThreadId = null }: AppProps) {
           rateLimits={rateLimits}
           status={serverStatus}
           onClose={() => setStatusOpen(false)}
-          onRecover={recoverAppServerFromUi}
           onRefreshMcp={reloadMcpServerStatus}
           onLoginMcpServer={handleLoginMcpServer}
           statusRefreshing={statusRefreshing}
@@ -996,17 +994,6 @@ export default function App({ initialThreadId = null }: AppProps) {
     try {
       setServerStatus(await restartServer());
       showToast("App server reconnected");
-      await loadSessions();
-    } catch (error) {
-      showToast(error);
-    }
-  }
-
-  async function recoverAppServerFromUi() {
-    try {
-      const result = await recoverAppServer();
-      setServerStatus(result.status);
-      showToast(result.output || "App server recovered");
       await loadSessions();
     } catch (error) {
       showToast(error);
@@ -2563,7 +2550,6 @@ function StatusModal({
   statusRefreshing,
   onClose,
   onLoginMcpServer,
-  onRecover,
   onRefresh,
   onRefreshMcp,
   onSaveMcpServer
@@ -2576,7 +2562,6 @@ function StatusModal({
   statusRefreshing: boolean;
   onClose: () => void;
   onLoginMcpServer: (name: string) => Promise<string>;
-  onRecover: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onRefreshMcp: () => Promise<void>;
   onSaveMcpServer: (input: { name: string; url: string }) => Promise<void>;
@@ -2703,11 +2688,8 @@ function StatusModal({
             </div>
           </section>
         )}
-        <p className="muted">Rate limits use the app-server account quota snapshot. Recover checks the sidecar PID and socket, then reconnects this UI.</p>
+        <p className="muted">Rate limits use the app-server account quota snapshot. Start or recover the sidecar from the CLI, then reconnect this UI.</p>
         <footer className="modal-actions">
-          <button className="secondary-button" type="button" onClick={() => void onRecover()}>
-            <RefreshCw size={16} /> Recover app-server
-          </button>
           <button className="primary-button" type="button" onClick={() => void onRefresh()} disabled={statusRefreshing}>
             <RefreshCw size={16} className={statusRefreshing ? "spin-icon" : ""} /> Refresh
           </button>

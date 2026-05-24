@@ -20,12 +20,19 @@ const uploadDir = path.join(dataDir, "uploads");
 const socketPath = path.join(runDir, "codex-app-server.sock");
 const logPath = path.join(runDir, "server.log");
 let server = null;
+let binPath = "";
 
 try {
   await command("npm", ["init", "-y"], { cwd: installDir, quiet: true, label: "initializing temp package" });
   await command("npm", ["install", npmSpec], { cwd: installDir, label: `installing ${npmSpec}` });
 
-  const binPath = path.join(installDir, "node_modules", ".bin", "codex-web-ui");
+  binPath = path.join(installDir, "node_modules", ".bin", "codex-web-ui");
+  await command(binPath, ["app-server", "start", "--socket", socketPath], {
+    cwd: installDir,
+    env: cleanEnv({}),
+    label: "starting fresh codex app-server"
+  });
+
   await writeFile(logPath, "");
   server = spawn(binPath, [
     "--host", host,
@@ -76,7 +83,7 @@ try {
   }
 } finally {
   if (!keep) {
-    await stopServer(server, socketPath);
+    await stopServer(server, binPath, socketPath);
     await rm(installDir, { recursive: true, force: true });
     await rm(runDir, { recursive: true, force: true });
   }
@@ -110,7 +117,7 @@ async function json(url, init) {
   return body;
 }
 
-async function stopServer(server, socketPath) {
+async function stopServer(server, binPath, socketPath) {
   if (server?.pid) {
     try {
       process.kill(-server.pid, "SIGTERM");
@@ -126,6 +133,9 @@ async function stopServer(server, socketPath) {
       // Process may have already exited.
     }
   }
+  if (binPath) {
+    await command(binPath, ["app-server", "stop", "--socket", socketPath], { allowFailure: true, quiet: true });
+  }
   await command("pkill", ["-f", socketPath], { allowFailure: true, quiet: true });
 }
 
@@ -136,6 +146,7 @@ function command(binary, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, {
       cwd: options.cwd ?? process.cwd(),
+      env: options.env ?? process.env,
       stdio: options.quiet ? "ignore" : "inherit"
     });
     child.once("error", (error) => {

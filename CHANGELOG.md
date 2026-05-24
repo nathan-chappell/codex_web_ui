@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.8
+
+- Simplified app-server lifecycle ownership: `codex-web-ui` now requires a running websocket-ready app-server socket and no longer starts or recovers the sidecar from the web process.
+- Removed the browser app-server recovery action; use `codex-web-ui app-server start|recover|restart` from the CLI instead.
+- Added a Docker entrypoint that starts the sidecar explicitly before launching the web UI.
+
 ## 1.0.7
 
 - Fixed app-server recovery from installed packages by passing the real CLI path into the Next server.

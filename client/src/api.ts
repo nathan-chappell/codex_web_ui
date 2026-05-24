@@ -29,11 +29,6 @@ export async function restartServer(): Promise<ServerStatus> {
   return body.status;
 }
 
-export async function recoverAppServer(): Promise<{ output: string; status: ServerStatus }> {
-  const body = await postJson<{ output: string; status: ServerStatus }>("/api/app-server/recover", {});
-  return body;
-}
-
 export async function rpc<T = unknown>(method: string, params: JsonValue = {}): Promise<T> {
   const body = await postJson<{ result: T }>("/api/rpc", { method, params });
   return body.result;

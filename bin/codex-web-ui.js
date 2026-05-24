@@ -98,7 +98,6 @@ setEnv(env, "CODEX_WEB_UI_AUTH_SECRET", pick("authSecret", "CODEX_WEB_UI_AUTH_SE
 setEnv(env, "CODEX_WEB_UI_ALLOWED_ORIGINS", pick("allowedOrigins", "CODEX_WEB_UI_ALLOWED_ORIGINS"));
 setEnv(env, "CODEX_WEB_UI_DATA_DIR", dataDir);
 setEnv(env, "CODEX_WEB_UI_UPLOAD_DIR", uploadDir);
-setEnv(env, "CODEX_WEB_UI_BIN", fileURLToPath(import.meta.url));
 setEnv(env, "CODEX_APP_SERVER_SOCKET", appServerSocket);
 setEnv(env, "CODEX_COMMAND", codexCommand);
 setEnv(env, "CODEX_CWD", codexCwd);
@@ -124,15 +123,21 @@ if (!existsSync(join(packageRoot, ".next", "BUILD_ID"))) {
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(uploadDir, { recursive: true });
 
-if (!externalAppServer) {
-  await recoverAppServer(appServerControlOptions({ command: codexCommand, socket: appServerSocket }));
+if (!await isSocketWebSocketReady(appServerSocket, 1_000)) {
+  fail([
+    `Codex app-server socket is not ready: ${appServerSocket}`,
+    "Start it before launching the Web UI:",
+    `  codex-web-ui app-server start --socket ${appServerSocket}`,
+    "",
+    "If you run the official app-server yourself, make sure it listens on that Unix socket."
+  ].join("\n"));
 }
 
 console.log(`codex-web-ui listening on http://${host}:${port}`);
 console.log(`codex-web-ui app cwd: ${packageRoot}`);
 console.log(`codex default cwd: ${env.CODEX_CWD}`);
 console.log(`runtime data dir: ${env.CODEX_WEB_UI_DATA_DIR}`);
-console.log(`codex app-server socket: ${env.CODEX_APP_SERVER_SOCKET}${externalAppServer ? " (external)" : " (managed)"}`);
+console.log(`codex app-server socket: ${env.CODEX_APP_SERVER_SOCKET}`);
 console.log(`permissions: approval=${env.CODEX_WEB_UI_APPROVAL_POLICY}, sandbox=${env.CODEX_WEB_UI_SANDBOX}${env.CODEX_WEB_UI_LOCK_PERMISSIONS === "1" ? ", locked" : ""}${unsafePermissions ? ", unsafe enabled" : ""}`);
 if (configPath) {
   console.log(`config file: ${configPath}`);
@@ -378,7 +383,7 @@ async function runDoctorCommand(options) {
   checks.push([
     "app-server socket",
     `${options.appServerSocket}${socketReady ? " (websocket ready)" : socketPresent ? " (present, not websocket-ready)" : " (missing)"}`,
-    options.externalAppServer ? socketReady : true
+    socketReady
   ]);
 
   console.log("Codex Web UI doctor");
@@ -386,8 +391,8 @@ async function runDoctorCommand(options) {
     console.log(`${ok ? "ok  " : "fail"} ${name}: ${detail}`);
   }
   console.log("");
-  if (!socketReady && !options.externalAppServer) {
-    console.log("The main `codex-web-ui` command will try to start or recover the managed app-server sidecar.");
+  if (!socketReady) {
+    console.log("Start the sidecar first with `codex-web-ui app-server start`, then run `codex-web-ui`.");
   }
   if (!options.password && isLoopbackHost(options.host)) {
     console.log("No password is configured; `codex-web-ui` will print a temporary local password on each start.");
@@ -835,8 +840,8 @@ function printHelp() {
        codex-web-ui doctor [options]
        codex-web-ui app-server <start|stop|restart|recover|status> [options]
 
-Starts the Codex Web UI using Next.js production mode. By default this also
-starts or recovers a detached codex app-server sidecar.
+Starts the Codex Web UI using Next.js production mode. The codex app-server
+sidecar must already be running.
 
 Options:
   -c, --config <path>           JSON config file. Default search:
@@ -850,8 +855,8 @@ Options:
   --allowed-origins <csv>       Set CODEX_WEB_UI_ALLOWED_ORIGINS
   --app-server-socket <path>    Codex app-server Unix socket. Default:
                                 ~/.codex-webgui/codex-app-server.sock
-  --external-app-server         Use the socket but do not start/recover the
-                                app-server sidecar
+  --external-app-server         Deprecated no-op; app-server is always external
+                                to the web process
   --codex-command <command>     Codex command. Default: codex
   --cwd <path>                  Default Codex working directory
   --model <model>               Default Codex model. Default: gpt-5.5
