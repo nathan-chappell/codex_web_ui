@@ -1,6 +1,6 @@
 {
   "name": "codex-web-ui",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": false,
   "description": "Mobile-friendly web UI client for the official Codex app-server.",
   "license": "MIT",
@@ -22,7 +22,7 @@
   ],
   "type": "module",
   "bin": {
-    "codex-web-ui": "./bin/codex-web-ui.js"
+    "codex-web-ui": "bin/codex-web-ui.js"
   },
   "publishConfig": {
     "access": "public"

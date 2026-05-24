@@ -53,7 +53,8 @@ Open `http://127.0.0.1:4545`.
 ## Container Image
 
 The repository includes a Dockerfile for users who prefer an isolated runtime
-over a global npm install:
+over a global npm install. The image installs the released npm package during
+`docker build`; it does not copy the local checkout into the image.
 
 ```bash
 docker build -t codex-web-ui .
@@ -82,8 +83,11 @@ npm run test:docker
 The Docker smoke builds `codex-web-ui:smoke`, starts it on port `4555` with a
 temporary data directory and `--external-app-server`, verifies `/threads`,
 `/api/auth`, and password login, then removes the container and temp volumes.
-Set `CODEX_WEB_UI_DOCKER_SKIP_BUILD=1` to reuse an existing image or
-`CODEX_WEB_UI_DOCKER_IMAGE=<tag>` to test another tag.
+By default it builds with `codex-web-ui@<package.json version>` from npm. Set
+`CODEX_WEB_UI_DOCKER_NPM_SPEC=codex-web-ui@latest` or another npm package spec
+to test a different published package, `CODEX_WEB_UI_DOCKER_IMAGE=<tag>` to
+change the local image tag, or `CODEX_WEB_UI_DOCKER_SKIP_BUILD=1` to reuse an
+existing image.
 
 ## CLI
 

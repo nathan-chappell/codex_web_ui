@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const image = process.env.CODEX_WEB_UI_DOCKER_IMAGE || "codex-web-ui:smoke";
+const npmSpec = process.env.CODEX_WEB_UI_DOCKER_NPM_SPEC || `codex-web-ui@${packageJson.version}`;
 const port = Number(process.env.CODEX_WEB_UI_DOCKER_PORT || "4555");
 const password = process.env.CODEX_WEB_UI_DOCKER_PASSWORD || "docker-smoke-password";
 const authSecret = process.env.CODEX_WEB_UI_DOCKER_AUTH_SECRET || "docker-smoke-auth-secret";
@@ -19,8 +21,19 @@ let codexDir = "";
 try {
   await command("docker", ["version", "--format", "{{.Server.Version}}"], { label: "checking Docker" });
   if (!skipBuild) {
-    await command("docker", ["build", "-t", image, "."], { label: `building ${image}` });
+    await command("docker", [
+      "build",
+      "--build-arg",
+      `CODEX_WEB_UI_NPM_SPEC=${npmSpec}`,
+      "-t",
+      image,
+      "."
+    ], { label: `building ${image} from ${npmSpec}` });
   }
+
+  await command("docker", ["run", "--rm", "--entrypoint", "npm", image, "ls", "-g", "codex-web-ui", "--depth=0"], {
+    label: "checking installed npm package"
+  });
 
   dataDir = await mkdtemp(path.join(tmpdir(), "codex-web-ui-docker-data-"));
   codexDir = await mkdtemp(path.join(tmpdir(), "codex-web-ui-docker-codex-"));
