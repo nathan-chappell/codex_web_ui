@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5
+
+- Changed reasoning items from expandable cards to compact static summaries in thread view.
+
 ## 1.0.4
 
 - Added a deployment smoke test that installs the published npm package into a temporary directory, starts it on `0.0.0.0:4546` with password `codex`, verifies auth/login, and cleans up the fresh app-server socket.

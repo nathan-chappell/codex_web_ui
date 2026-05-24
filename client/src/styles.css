@@ -1098,6 +1098,38 @@ textarea {
   box-shadow: 0 1px 0 rgba(17, 25, 29, 0.03);
 }
 
+.item.item-reasoning .item-body,
+.item.item-reasoningGroup .item-body {
+  background: #f8f9f9;
+  border-color: #edf0f0;
+  padding: 8px 12px;
+}
+
+.reasoning-static {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 28px;
+  color: var(--muted-text);
+  font-size: 13px;
+}
+
+.reasoning-static-title {
+  min-width: 0;
+  overflow: hidden;
+  color: #273238;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reasoning-static-meta {
+  flex: 0 0 auto;
+  color: #8a9499;
+  font-size: 12px;
+}
+
 .item.command .item-body {
   background: #11191d;
   color: #f1f5f6;
@@ -1453,22 +1485,8 @@ textarea {
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.item-body :where(.code-block, .json-block, pre, table, .command-terminal, .tool-call-element, .reasoning-element) {
+.item-body :where(.code-block, .json-block, pre, table, .command-terminal, .tool-call-element) {
   max-width: 100%;
-}
-
-.reasoning-element {
-  margin: 0;
-}
-
-.reasoning-element [data-slot="collapsible-trigger"] {
-  min-height: 34px;
-  padding: 7px 9px;
-  border-radius: 8px;
-}
-
-.reasoning-element [data-slot="collapsible-content"] {
-  padding: 0 9px 9px;
 }
 
 .item-body :where(.code-block, .json-block, pre) {

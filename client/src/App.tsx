@@ -66,7 +66,6 @@ import {
   PromptInputFooter,
   PromptInputTools
 } from "@/components/ai-elements/prompt-input";
-import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
@@ -3348,7 +3347,7 @@ const ThreadItemView = memo(function ThreadItemView({
 }) {
   const label = itemLabel(typeForItemLabel(item.type));
   return (
-    <article className={`item ${kindClass(item.type)} ${messageToneClass(item)} ${compact ? "compact" : ""}`}>
+    <article className={`item item-${item.type} ${kindClass(item.type)} ${messageToneClass(item)} ${compact ? "compact" : ""}`}>
       {label && <div className="item-label">{label}</div>}
       <div className="item-body">{renderItemBody(item, cwd, onOpenFile)}</div>
     </article>
@@ -3397,14 +3396,7 @@ function renderItemBody(item: DisplayThreadItem, cwd: string | null, onOpenFile:
     );
   }
   if (item.type === "reasoning") {
-    const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : "";
-    const content = Array.isArray(item.content) ? item.content.join("\n\n") : "";
-    return (
-      <Reasoning className="reasoning-element" defaultOpen={false} isStreaming={String(item.status ?? "").toLowerCase().includes("running")}>
-        <ReasoningTrigger />
-        <ReasoningContent>{[summary, content].filter(Boolean).join("\n\n") || "Reasoning"}</ReasoningContent>
-      </Reasoning>
-    );
+    return <ReasoningSummaryView items={[item]} title="Reasoning" />;
   }
   if (item.type === "plan") {
     return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={typeof item.text === "string" ? item.text : "Plan updated"} />;
@@ -3503,25 +3495,18 @@ function CommandGroupView({ cwd, items, onOpenFile }: { cwd: string | null; item
 }
 
 function ReasoningGroupView({ items }: { items: ThreadItem[] }) {
-  const content = items.map(reasoningText).filter(Boolean).join("\n\n---\n\n") || "Reasoning";
-  const running = items.some((item) => String(item.status ?? "").toLowerCase().includes("running"));
-  return (
-    <CollapsiblePanel
-      className="reasoning-group-output"
-      meta={running ? "running" : `${items.length} entries`}
-      title={`Reasoning (${items.length})`}
-    >
-      <Reasoning className="reasoning-element" defaultOpen isStreaming={running}>
-        <ReasoningContent>{content}</ReasoningContent>
-      </Reasoning>
-    </CollapsiblePanel>
-  );
+  return <ReasoningSummaryView items={items} title={`Reasoning (${items.length})`} />;
 }
 
-function reasoningText(item: ThreadItem): string {
-  const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : "";
-  const content = Array.isArray(item.content) ? item.content.join("\n\n") : "";
-  return [summary, content].filter(Boolean).join("\n\n");
+function ReasoningSummaryView({ items, title }: { items: ThreadItem[]; title: string }) {
+  const running = items.some((item) => String(item.status ?? "").toLowerCase().includes("running"));
+  const statusText = running ? "Thinking" : items.length === 1 ? "Thought" : `${items.length} entries`;
+  return (
+    <div className="reasoning-static" aria-label={title}>
+      <span className="reasoning-static-title">{title}</span>
+      <span className="reasoning-static-meta">{statusText}</span>
+    </div>
+  );
 }
 
 function friendlyPhaseLabel(value: unknown): string | null {
