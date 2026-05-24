@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.10
+
+- Removed the project-specific agriculture ontology MCP defaults from the add-server form.
+
 ## 1.0.9
 
 - Made `codex-web-ui init` output clearer about the generated login password, where it is stored, and how to start the app-server sidecar.

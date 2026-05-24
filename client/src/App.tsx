@@ -2567,8 +2567,8 @@ function StatusModal({
   onSaveMcpServer: (input: { name: string; url: string }) => Promise<void>;
 }) {
   const socket = typeof status.config?.appServerSocketPath === "string" ? status.config.appServerSocketPath : "stdio / owned";
-  const [serverName, setServerName] = useState("agro-ontology");
-  const [serverUrl, setServerUrl] = useState("http://127.0.0.1:3000/api/mcp");
+  const [serverName, setServerName] = useState("");
+  const [serverUrl, setServerUrl] = useState("");
   const [oauthLoginServer, setOauthLoginServer] = useState<string | null>(null);
   const [oauthFallback, setOauthFallback] = useState<{ name: string; url: string } | null>(null);
   const [oauthError, setOauthError] = useState("");
@@ -2658,7 +2658,7 @@ function StatusModal({
           <form className="mcp-server-form" onSubmit={handleSaveMcpServer}>
             <label className="field">
               <span>Name</span>
-              <input value={serverName} onChange={(event) => setServerName(event.target.value)} placeholder="agro-ontology" />
+              <input value={serverName} onChange={(event) => setServerName(event.target.value)} placeholder="local-tools" />
             </label>
             <label className="field">
               <span>URL</span>
