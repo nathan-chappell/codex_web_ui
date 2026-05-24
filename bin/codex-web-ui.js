@@ -325,9 +325,19 @@ async function runInitCommand(options) {
   mkdirSync(resolvePath(String(config.uploadDir)), { recursive: true });
 
   console.log(`Wrote config: ${target}`);
-  console.log(`Login password: ${config.password}`);
+  console.log("Config file permissions: 0600 (owner read/write)");
+  console.log("");
+  console.log("Login password:");
+  console.log(`  ${config.password}`);
+  console.log("");
+  console.log("Password location:");
+  console.log(`  ${target}`);
+  console.log("  JSON key: password");
+  console.log("");
+  console.log("Use this password in the browser login form. Anyone with this password can use this Web UI with the permissions in the config.");
   console.log("");
   console.log("Next steps:");
+  console.log(`  codex-web-ui app-server start --socket ${config.appServerSocket}`);
   console.log("  codex-web-ui doctor");
   console.log("  codex-web-ui");
 }
@@ -888,7 +898,8 @@ Defaults:
 First run:
   codex-web-ui init             Write ~/.codex-webgui/config.json
   codex-web-ui doctor           Check Codex CLI, build, auth, dirs, and socket
-  codex-web-ui                  Start the Web UI and managed app-server
+  codex-web-ui app-server start Start the Codex app-server sidecar
+  codex-web-ui                  Start the Web UI
 
 If no password is configured and the host is loopback, start prints a temporary
 local password. Non-loopback hosts require a configured password.

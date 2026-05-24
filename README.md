@@ -30,6 +30,10 @@ codex-web-ui
 
 Open `http://127.0.0.1:4545`.
 
+`codex-web-ui init` prints the login password and writes it to
+`~/.codex-webgui/config.json` under the `password` key. The config file is
+created with owner-only permissions (`0600`).
+
 The normal startup command starts only the Next.js server. The detached
 `codex app-server` sidecar must already be running and websocket-ready on the
 configured Unix socket. Run `codex-web-ui doctor` after install or upgrade to
@@ -45,6 +49,7 @@ not include a `.next` production build.
 npm install
 npm run build
 node ./bin/codex-web-ui.js init
+node ./bin/codex-web-ui.js app-server start
 node ./bin/codex-web-ui.js doctor
 node ./bin/codex-web-ui.js
 ```
@@ -260,8 +265,9 @@ The server writes:
 - `sessions/<thread-id>.jsonl` under `CODEX_WEB_UI_DATA_DIR`.
 - `sessions.json` under `CODEX_WEB_UI_DATA_DIR`.
 - Uploaded files under `CODEX_WEB_UI_UPLOAD_DIR`.
-- A managed app-server socket at `CODEX_APP_SERVER_SOCKET`.
-- Managed app-server PID and log files beside the socket.
+- A Codex app-server socket at `CODEX_APP_SERVER_SOCKET`.
+- App-server PID and log files beside the socket when started with
+  `codex-web-ui app-server start`.
 
 The browser also stores the 4-hour bearer token and UI layout preferences in
 `localStorage`.

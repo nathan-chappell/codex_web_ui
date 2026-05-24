@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.9
+
+- Made `codex-web-ui init` output clearer about the generated login password, where it is stored, and how to start the app-server sidecar.
+- Updated first-run documentation to include explicit sidecar startup.
+
 ## 1.0.8
 
 - Simplified app-server lifecycle ownership: `codex-web-ui` now requires a running websocket-ready app-server socket and no longer starts or recovers the sidecar from the web process.
