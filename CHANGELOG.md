@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.6
+
+- Removed thread-list multi-select and bulk archive controls.
+- Made composer collapse an explicit global preference instead of scroll-driven behavior.
+
 ## 1.0.5
 
 - Changed reasoning items from expandable cards to compact static summaries in thread view.
