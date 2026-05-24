@@ -32,7 +32,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { Fragment, FormEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, memo, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
@@ -74,7 +74,6 @@ import {
   browseFiles,
   browseRepositories,
   createRepository,
-  deleteThreadLog,
   downloadReferencedFile,
   getAuth,
   getClientRequests,
@@ -131,6 +130,7 @@ type SavedComposerDraft = {
 };
 type StoredLayout = {
   activePaneIndex?: number;
+  composerCollapsed?: boolean;
   mobilePane?: MobilePane;
   openThreadIds?: (string | null)[];
   recentOnly?: boolean;
@@ -180,7 +180,6 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [sessionPage, setSessionPage] = useState(1);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
-  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
   const [sidebarWidth, setSidebarWidth] = useState(() => clampNumber(initialStoredLayout.sidebarWidth, 240, 520, 330));
   const [threadSplitRatio, setThreadSplitRatio] = useState(() => clampNumber(initialStoredLayout.threadSplitRatio, 0.25, 0.75, 0.5));
   const [showArchived, setShowArchived] = useState(() => initialStoredLayout.showArchived ?? false);
@@ -188,6 +187,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [mobilePane, setMobilePane] = useState<MobilePane>(() => initialStoredLayout.mobilePane ?? "sessions");
   const [threadPaneCount, setThreadPaneCount] = useState<ThreadPaneCount>(() => initialStoredLayout.threadPaneCount ?? 1);
+  const [composerCollapsed, setComposerCollapsed] = useState(() => initialStoredLayout.composerCollapsed ?? false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -256,10 +256,6 @@ export default function App({ initialThreadId = null }: AppProps) {
   const threadSplitResizeFrameRef = useRef<number | null>(null);
   const pendingThreadSplitRatioRef = useRef(threadSplitRatio);
   const layoutWriteTimerRef = useRef<number | null>(null);
-  const longPressTimerRef = useRef<number | null>(null);
-  const longPressActivatedRef = useRef(false);
-  const sessionClickTimerRef = useRef<number | null>(null);
-
   useEffect(() => {
     if (!topMenuOpen && !mobileMenuOpen && !threadActionsOpen) {
       return;
@@ -308,8 +304,6 @@ export default function App({ initialThreadId = null }: AppProps) {
       if (threadSplitResizeFrameRef.current) {
         window.cancelAnimationFrame(threadSplitResizeFrameRef.current);
       }
-      clearSessionLongPress();
-      clearSessionClickTimer();
     };
   }, []);
 
@@ -449,7 +443,6 @@ export default function App({ initialThreadId = null }: AppProps) {
     }, 240);
     return () => window.clearTimeout(timer);
   }, [groupedThreads, mobilePane, selectedThreadId]);
-  const selectionActive = selectedSessionIds.size > 0;
   const handleActivatePane = useStableCallback((paneIndex: number) => activatePane(paneIndex));
   const handleArchivePaneThread = useStableCallback((thread: Thread, paneIndex: number) => archiveThread(thread, paneIndex));
   const handleForkPaneThread = useStableCallback((thread: Thread, paneIndex: number) => forkThread(thread, paneIndex));
@@ -483,6 +476,7 @@ export default function App({ initialThreadId = null }: AppProps) {
   useEffect(() => {
     writeStoredLayout({
       activePaneIndex,
+      composerCollapsed,
       mobilePane,
       openThreadIds,
       recentOnly,
@@ -491,7 +485,7 @@ export default function App({ initialThreadId = null }: AppProps) {
       threadPaneCount,
       threadSplitRatio
     }, layoutWriteTimerRef);
-  }, [activePaneIndex, mobilePane, openThreadIds, recentOnly, showArchived, sidebarWidth, threadPaneCount, threadSplitRatio]);
+  }, [activePaneIndex, composerCollapsed, mobilePane, openThreadIds, recentOnly, showArchived, sidebarWidth, threadPaneCount, threadSplitRatio]);
 
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
@@ -724,30 +718,13 @@ export default function App({ initialThreadId = null }: AppProps) {
                 value={searchTerm}
                 onChange={(event) => {
                   setSessionPage(1);
-                  clearSessionSelection();
                   setSearchTerm(event.target.value);
                 }}
                 placeholder="Title, preview, cwd"
               />
             </label>
-            {selectionActive && (
-              <div className="selection-tools">
-                <span>{selectedSessionIds.size} selected</span>
-                <button className="secondary-button" type="button" onClick={archiveSelectedSessions}>
-                  <Archive size={15} /> {showArchived ? "Unarchive" : "Archive"}
-                </button>
-                {showArchived && (
-                  <button className="danger-button" type="button" onClick={deleteSelectedArchiveFiles}>
-                    <Trash2 size={15} /> Delete file
-                  </button>
-                )}
-                <button className="icon-button" type="button" onClick={clearSessionSelection} title="Clear selection" aria-label="Clear selection">
-                  <X size={16} />
-                </button>
-              </div>
-            )}
           </div>
-          <div className={`sessions-list ${selectionActive ? "selecting" : ""}`} ref={sessionsListRef} onScroll={handleSessionsScroll}>
+          <div className="sessions-list" ref={sessionsListRef} onScroll={handleSessionsScroll}>
             {mergedSessions.length === 0 ? (
               <p className="muted empty-pad">No threads found.</p>
             ) : (
@@ -755,10 +732,7 @@ export default function App({ initialThreadId = null }: AppProps) {
                 <ThreadProjectGroup
                   group={group}
                   key={group.key}
-                  onClearLongPress={clearSessionLongPress}
                   onRowClick={handleSessionRowClick}
-                  onStartLongPress={startSessionLongPress}
-                  selectedSessionIds={selectedSessionIds}
                   selectedThreadId={selectedThreadId}
                   sessionPreviews={sessionPreviews}
                 />
@@ -855,10 +829,12 @@ export default function App({ initialThreadId = null }: AppProps) {
                   <ThreadPane
                     activeTurnId={thread ? activeTurnFromThread(thread) || activeTurns[thread.id] || null : null}
                     archiveLabel={showArchived ? "Unarchive" : "Archive"}
+                    composerCollapsed={composerCollapsed}
                     isActive={paneIndex === activePaneIndex}
                     isLoading={isLoadingThread}
                     onActivatePane={handleActivatePane}
                     onArchiveThread={handleArchivePaneThread}
+                    onComposerCollapsedChange={setComposerCollapsed}
                     onForkThread={handleForkPaneThread}
                     onInterruptThread={handleInterruptPaneThread}
                     onRenameThread={handleRenamePaneThread}
@@ -1457,11 +1433,9 @@ export default function App({ initialThreadId = null }: AppProps) {
   function switchArchiveFilter(archived: boolean) {
     setShowArchived(archived);
     setSessionPage(1);
-    clearSessionSelection();
   }
 
   function setRecentOnlyFilter(enabled: boolean) {
-    clearSessionSelection();
     setRecentOnly(enabled);
   }
 
@@ -1480,105 +1454,8 @@ export default function App({ initialThreadId = null }: AppProps) {
     }
   }
 
-  function handleSessionRowClick(event: MouseEvent<HTMLButtonElement>, threadId: string) {
-    if (longPressActivatedRef.current) {
-      longPressActivatedRef.current = false;
-      return;
-    }
-    if (selectionActive) {
-      toggleSessionSelection(threadId);
-      return;
-    }
-    if (event.detail > 1) {
-      clearSessionClickTimer();
-      toggleSessionSelection(threadId);
-      return;
-    }
-    clearSessionClickTimer();
-    sessionClickTimerRef.current = window.setTimeout(() => {
-      sessionClickTimerRef.current = null;
-      selectThread(threadId, activePaneIndexRef.current);
-    }, 220);
-  }
-
-  function startSessionLongPress(event: PointerEvent<HTMLButtonElement>, threadId: string) {
-    if (event.pointerType === "mouse") {
-      return;
-    }
-    clearSessionLongPress();
-    longPressActivatedRef.current = false;
-    longPressTimerRef.current = window.setTimeout(() => {
-      longPressActivatedRef.current = true;
-      toggleSessionSelection(threadId);
-    }, 550);
-  }
-
-  function clearSessionLongPress() {
-    if (longPressTimerRef.current) {
-      window.clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  }
-
-  function clearSessionClickTimer() {
-    if (sessionClickTimerRef.current) {
-      window.clearTimeout(sessionClickTimerRef.current);
-      sessionClickTimerRef.current = null;
-    }
-  }
-
-  function toggleSessionSelection(threadId: string) {
-    setSelectedSessionIds((current) => {
-      const next = new Set(current);
-      if (next.has(threadId)) {
-        next.delete(threadId);
-      } else {
-        next.add(threadId);
-      }
-      return next;
-    });
-  }
-
-  function clearSessionSelection() {
-    setSelectedSessionIds(new Set());
-  }
-
-  async function archiveSelectedSessions() {
-    const threadIds = [...selectedSessionIds];
-    if (threadIds.length === 0) {
-      return;
-    }
-    const method = showArchived ? "thread/unarchive" : "thread/archive";
-    try {
-      await Promise.all(threadIds.map((threadId) => rpc(method, { threadId })));
-      if (!showArchived) {
-        closeOpenThreads(threadIds);
-      }
-      clearSessionSelection();
-      await loadSessions(1);
-      setSessionPage(1);
-    } catch (error) {
-      showToast(error);
-    }
-  }
-
-  async function deleteSelectedArchiveFiles() {
-    const threadIds = [...selectedSessionIds];
-    if (threadIds.length === 0 || !window.confirm(`Delete ${threadIds.length} selected archive file${threadIds.length === 1 ? "" : "s"}?`)) {
-      return;
-    }
-    try {
-      await Promise.all(threadIds.map(async (threadId) => {
-        await rpc("thread/delete", { threadId }).catch(() => undefined);
-        await deleteThreadLog(threadId);
-      }));
-      closeOpenThreads(threadIds);
-      clearSessionSelection();
-      await loadSessions(1);
-      setSessionPage(1);
-    } catch (error) {
-      showToast(error);
-    }
+  function handleSessionRowClick(threadId: string) {
+    void selectThread(threadId, activePaneIndexRef.current);
   }
 
   function activatePane(paneIndex: number) {
@@ -2240,18 +2117,12 @@ function threadSplitWidthValue(ratio: number): string {
 
 function ThreadProjectGroup({
   group,
-  onClearLongPress,
   onRowClick,
-  onStartLongPress,
-  selectedSessionIds,
   selectedThreadId,
   sessionPreviews
 }: {
   group: { key: string; label: string; threads: Thread[] };
-  onClearLongPress: () => void;
-  onRowClick: (event: MouseEvent<HTMLButtonElement>, threadId: string) => void;
-  onStartLongPress: (event: PointerEvent<HTMLButtonElement>, threadId: string) => void;
-  selectedSessionIds: Set<string>;
+  onRowClick: (threadId: string) => void;
   selectedThreadId: string | null;
   sessionPreviews: Record<string, string>;
 }) {
@@ -2282,16 +2153,10 @@ function ThreadProjectGroup({
               key={thread.id}
               type="button"
               data-thread-id={thread.id}
-              className={`session-row ${thread.id === selectedThreadId ? "selected" : ""} ${selectedSessionIds.has(thread.id) ? "multi-selected" : ""}`}
-              aria-pressed={selectedSessionIds.has(thread.id)}
-              onClick={(event) => onRowClick(event, thread.id)}
+              className={`session-row ${thread.id === selectedThreadId ? "selected" : ""}`}
+              onClick={() => onRowClick(thread.id)}
               onContextMenu={(event) => event.preventDefault()}
-              onPointerDown={(event) => onStartLongPress(event, thread.id)}
-              onPointerUp={onClearLongPress}
-              onPointerCancel={onClearLongPress}
-              onPointerLeave={onClearLongPress}
             >
-              <span className="session-check" aria-hidden="true" />
               <strong>{titleForThread(thread)}</strong>
               <p>{sessionPreviews[thread.id] || thread.preview || thread.id}</p>
               <div className="session-meta-row">
@@ -2309,10 +2174,12 @@ function ThreadProjectGroup({
 const ThreadPane = memo(function ThreadPane({
   activeTurnId,
   archiveLabel,
+  composerCollapsed,
   isActive,
   isLoading,
   onActivatePane,
   onArchiveThread,
+  onComposerCollapsedChange,
   onForkThread,
   onInterruptThread,
   onRenameThread,
@@ -2328,10 +2195,12 @@ const ThreadPane = memo(function ThreadPane({
 }: {
   activeTurnId: string | null;
   archiveLabel: string;
+  composerCollapsed: boolean;
   isActive: boolean;
   isLoading: boolean;
   onActivatePane: (paneIndex: number) => void;
   onArchiveThread: (thread: Thread, paneIndex: number) => void;
+  onComposerCollapsedChange: (collapsed: boolean) => void;
   onForkThread: (thread: Thread, paneIndex: number) => void;
   onInterruptThread: (thread: Thread) => void;
   onRenameThread: (thread: Thread, name: string) => Promise<void>;
@@ -2346,14 +2215,11 @@ const ThreadPane = memo(function ThreadPane({
   tokenUsage: ThreadTokenUsage | null;
 }) {
   const [topHidden, setTopHidden] = useState(() => isMobileViewport());
-  const [composerCollapsed, setComposerCollapsed] = useState(false);
   const conversationRef = useRef<HTMLDivElement | null>(null);
   const conversationScrollTopRef = useRef(0);
-  const composerManuallyCollapsedRef = useRef(false);
   const topHiddenRef = useRef(topHidden);
-  const composerCollapsedRef = useRef(composerCollapsed);
   const chromeStateFrameRef = useRef<number | null>(null);
-  const pendingChromeStateRef = useRef<{ topHidden?: boolean; composerCollapsed?: boolean }>({});
+  const pendingChromeStateRef = useRef<{ topHidden?: boolean }>({});
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
   const lastFinalAnswerCountRef = useRef(0);
@@ -2415,9 +2281,7 @@ const ThreadPane = memo(function ThreadPane({
       lastItemCountRef.current = 0;
       lastFinalAnswerCountRef.current = 0;
       autoScrollRef.current = true;
-      composerManuallyCollapsedRef.current = false;
       setTopHiddenState(false);
-      setComposerCollapsedState(false);
       return;
     }
     if (lastThreadViewRef.current !== thread.id) {
@@ -2425,9 +2289,7 @@ const ThreadPane = memo(function ThreadPane({
       lastItemCountRef.current = itemCount;
       lastFinalAnswerCountRef.current = countFinalAnswerItems(thread.turns ?? []);
       autoScrollRef.current = true;
-      composerManuallyCollapsedRef.current = false;
       setTopHiddenState(isMobileViewport());
-      setComposerCollapsedState(false);
       scrollToEnd("instant");
       return;
     }
@@ -2435,9 +2297,6 @@ const ThreadPane = memo(function ThreadPane({
       scrollToEnd("smooth");
     }
     const finalAnswerCount = countFinalAnswerItems(thread.turns ?? []);
-    if (finalAnswerCount > lastFinalAnswerCountRef.current && !composerManuallyCollapsedRef.current) {
-      setComposerCollapsedState(false);
-    }
     lastFinalAnswerCountRef.current = finalAnswerCount;
     lastItemCountRef.current = itemCount;
   }, [itemCount, thread]);
@@ -2462,11 +2321,11 @@ const ThreadPane = memo(function ThreadPane({
 
     if (isMobileViewport()) {
       if (scrollingTowardHistory && awayFromBottom) {
-        scheduleChromeState({ topHidden: false, composerCollapsed: composerManuallyCollapsedRef.current ? undefined : true });
+        scheduleChromeState({ topHidden: false });
         return;
       }
       if (nearBottom) {
-        scheduleChromeState({ topHidden: true, composerCollapsed: composerManuallyCollapsedRef.current ? undefined : false });
+        scheduleChromeState({ topHidden: true });
         return;
       }
       if (scrollingTowardBottom) {
@@ -2500,27 +2359,16 @@ const ThreadPane = memo(function ThreadPane({
         }
         if (isMobileViewport()) {
           setTopHiddenState(true);
-          if (!composerManuallyCollapsedRef.current) {
-            setComposerCollapsedState(false);
-          }
         }
       });
     };
     applyScroll(Math.max(1, passes));
   }
 
-  function handleComposerCollapsedChange(collapsed: boolean, options: { manual?: boolean } = {}) {
-    if (options.manual !== false) {
-      composerManuallyCollapsedRef.current = collapsed;
-    }
-    setComposerCollapsedState(collapsed);
-  }
-
-  function scheduleChromeState(nextState: { topHidden?: boolean; composerCollapsed?: boolean }) {
+  function scheduleChromeState(nextState: { topHidden?: boolean }) {
     pendingChromeStateRef.current = {
       ...pendingChromeStateRef.current,
-      ...(nextState.topHidden === undefined ? {} : { topHidden: nextState.topHidden }),
-      ...(nextState.composerCollapsed === undefined ? {} : { composerCollapsed: nextState.composerCollapsed })
+      ...(nextState.topHidden === undefined ? {} : { topHidden: nextState.topHidden })
     };
     if (chromeStateFrameRef.current !== null) {
       return;
@@ -2532,9 +2380,6 @@ const ThreadPane = memo(function ThreadPane({
       if (pending.topHidden !== undefined) {
         setTopHiddenState(pending.topHidden);
       }
-      if (pending.composerCollapsed !== undefined) {
-        setComposerCollapsedState(pending.composerCollapsed);
-      }
     });
   }
 
@@ -2544,14 +2389,6 @@ const ThreadPane = memo(function ThreadPane({
     }
     topHiddenRef.current = value;
     setTopHidden(value);
-  }
-
-  function setComposerCollapsedState(value: boolean) {
-    if (composerCollapsedRef.current === value) {
-      return;
-    }
-    composerCollapsedRef.current = value;
-    setComposerCollapsed(value);
   }
 
   return (
@@ -2589,7 +2426,6 @@ const ThreadPane = memo(function ThreadPane({
           </div>
           <Composer
             activeTurnId={activeTurnId}
-            autoCollapseOnSubmit={!composerManuallyCollapsedRef.current}
             deliveryKey={thread.id}
             deliveryVersion={itemCount}
             onInterrupt={() => onInterruptThread(thread)}
@@ -2600,7 +2436,7 @@ const ThreadPane = memo(function ThreadPane({
             collapsed={composerCollapsed}
             contextUsage={contextUsage}
             onError={onError}
-            onCollapsedChange={handleComposerCollapsedChange}
+            onCollapsedChange={onComposerCollapsedChange}
             onOpenSettings={onOpenSettings}
             onReferenceFile={onReferenceFile}
             onReferenceSkill={onReferenceSkill}
@@ -3981,7 +3817,6 @@ function statusType(thread: Thread | null): string {
 const Composer = memo(function Composer({
   activeTurnId,
   archiveLabel,
-  autoCollapseOnSubmit,
   collapsed,
   contextUsage,
   deliveryKey,
@@ -3998,13 +3833,12 @@ const Composer = memo(function Composer({
 }: {
   activeTurnId: string | null;
   archiveLabel: string;
-  autoCollapseOnSubmit: boolean;
   collapsed: boolean;
   contextUsage: ThreadTokenUsage | null;
   deliveryKey: string;
   deliveryVersion: number;
   onArchive: () => void;
-  onCollapsedChange: (collapsed: boolean, options?: { manual?: boolean }) => void;
+  onCollapsedChange: (collapsed: boolean) => void;
   onError: (error: unknown) => void;
   onFork: () => void;
   onInterrupt: () => void;
@@ -4122,9 +3956,6 @@ const Composer = memo(function Composer({
       const sent = await onSend(draftText, action);
       if (sent) {
         setDraftValue("");
-        if (autoCollapseOnSubmit) {
-          onCollapsedChange(true, { manual: false });
-        }
         if (deliveryKeyRef.current !== deliveryKey) {
           return;
         }
@@ -5251,6 +5082,7 @@ function writeStoredLayout(layout: StoredLayout, timerRef?: RefObject<number | n
   try {
     window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
       activePaneIndex: clampNumber(layout.activePaneIndex, 0, (layout.threadPaneCount ?? 1) - 1, 0),
+      composerCollapsed: layout.composerCollapsed ?? false,
       mobilePane: layout.mobilePane,
       openThreadIds: initialOpenThreadIds(layout),
       recentOnly: layout.recentOnly ?? false,
@@ -5304,6 +5136,7 @@ function parseStoredLayout(value: unknown): StoredLayout {
   const mobilePane = record.mobilePane === "thread" || record.mobilePane === "sessions" ? record.mobilePane : undefined;
   return {
     activePaneIndex: numberValue(record.activePaneIndex) ?? undefined,
+    composerCollapsed: typeof record.composerCollapsed === "boolean" ? record.composerCollapsed : undefined,
     mobilePane,
     openThreadIds: Array.isArray(record.openThreadIds)
       ? record.openThreadIds.map((item) => typeof item === "string" && item ? item : null)
