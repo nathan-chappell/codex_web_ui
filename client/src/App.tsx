@@ -4183,6 +4183,10 @@ const Composer = memo(function Composer({
       onError(new Error("Audio recording is not available in this browser."));
       return;
     }
+    if (!window.isSecureContext) {
+      onError(new Error("Microphone permission requires HTTPS, localhost, or another secure browser context."));
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
@@ -4225,7 +4229,7 @@ const Composer = memo(function Composer({
     } catch (error) {
       stopRecordingStream();
       setRecordingState("idle");
-      onError(error);
+      onError(microphonePermissionError(error));
     }
   }
 
@@ -5767,6 +5771,20 @@ function exitText(value: unknown): string {
 
 function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function microphonePermissionError(error: unknown): Error {
+  const name = error instanceof DOMException ? error.name : error instanceof Error ? error.name : "";
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return new Error("Microphone permission was denied. Enable microphone access for this site and try again.");
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return new Error("No microphone was found for transcription.");
+  }
+  if (name === "SecurityError") {
+    return new Error("Microphone permission is blocked by the browser security context or site policy.");
+  }
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function looksLikeErrorMessage(message: string): boolean {

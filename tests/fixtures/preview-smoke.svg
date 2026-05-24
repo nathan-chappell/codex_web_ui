@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="96" viewBox="0 0 160 96" role="img" aria-label="Playwright image preview fixture">
+  <rect width="160" height="96" fill="#f8fafc"/>
+  <rect x="12" y="12" width="136" height="72" rx="8" fill="#0f766e"/>
+  <circle cx="48" cy="42" r="16" fill="#facc15"/>
+  <path d="M28 76 68 52 92 68 112 44 140 76z" fill="#e0f2fe"/>
+</svg>

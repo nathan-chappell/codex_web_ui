@@ -152,7 +152,7 @@ The server writes:
 
 - `server.jsonl` under `CODEX_WEB_UI_DATA_DIR`.
 - `sessions/<thread-id>.jsonl` under `CODEX_WEB_UI_DATA_DIR`.
-- `sessions/index.json` under `CODEX_WEB_UI_DATA_DIR`.
+- `sessions.json` under `CODEX_WEB_UI_DATA_DIR`.
 - Uploaded files under `CODEX_WEB_UI_UPLOAD_DIR`.
 
 The browser also stores the 4-hour bearer token and UI layout preferences in
@@ -231,13 +231,16 @@ To expose the running server through ngrok:
 ngrok http 4545
 ```
 
-Set a strong `CODEX_WEB_UI_PASSWORD` before exposing the server to the internet.
+Set a strong `CODEX_WEB_UI_PASSWORD` and `CODEX_WEB_UI_AUTH_SECRET` before
+exposing the server to the internet. Browser microphone and screen-capture
+permissions require HTTPS, localhost, or another secure browser context.
 
 Useful environment variables:
 
 ```bash
 CODEX_WEB_UI_PASSWORD='change-me' HOST=127.0.0.1 PORT=4545 npm start
-CODEX_WEB_UI_ALLOWED_ORIGINS='http://localhost:*,http://127.0.0.1:*,http://192.168.1.66:*,https://manifesto-tank-reliance.ngrok-free.dev' npm start
+CODEX_WEB_UI_ALLOWED_ORIGINS='http://localhost:*,http://127.0.0.1:*,https://example-tunnel.example.com' npm start
+CODEX_WEB_UI_ALLOWED_DEV_ORIGINS='192.168.1.66' npm run dev
 CODEX_WEB_UI_AUTH_SECRET='separate-token-signing-secret' npm start
 CODEX_COMMAND=codex CODEX_CWD=/path/to/project npm start
 CODEX_MODEL=gpt-5.5 CODEX_REASONING_EFFORT=high npm start
