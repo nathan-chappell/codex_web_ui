@@ -60,6 +60,7 @@
     "check": "tsc --noEmit",
     "test:security": "node --import tsx --test tests/security/*.test.ts",
     "test:docker": "node scripts/docker-smoke.mjs",
+    "test:deployment": "node scripts/deployment-smoke.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "prepack": "npm run build"

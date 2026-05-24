@@ -32,7 +32,6 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
 import { Fragment, FormEvent, memo, MouseEvent, PointerEvent, TouchEvent, UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -167,8 +166,6 @@ function useStableCallback<T extends (...args: never[]) => unknown>(callback: T)
 }
 
 export default function App({ initialThreadId = null }: AppProps) {
-  const router = useRouter();
-  const pathname = usePathname();
   const [authInfo, setAuthInfo] = useState<AuthState | null>(null);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
@@ -1654,9 +1651,7 @@ export default function App({ initialThreadId = null }: AppProps) {
     setPaneThreadId(targetPaneIndex, threadId);
     if (updateRoute && threadPaneCount === 1) {
       const nextPath = `/thread/${encodeURIComponent(threadId)}`;
-      if (pathname !== nextPath) {
-        router.push(nextPath);
-      }
+      updateBrowserPath(nextPath);
     }
     setSelectedThreadId(threadId);
     setMobilePane("thread");
@@ -3393,9 +3388,10 @@ function renderItemBody(item: DisplayThreadItem, cwd: string | null, onOpenFile:
     return <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={userInputText(item.content)} />;
   }
   if (item.type === "agentMessage") {
+    const phaseLabel = friendlyPhaseLabel(item.phase);
     return (
       <>
-        {typeof item.phase === "string" && <p className="muted">{item.phase}</p>}
+        {phaseLabel && <p className="muted item-phase">{phaseLabel}</p>}
         <MarkdownText cwd={cwd} onOpenFile={onOpenFile} text={typeof item.text === "string" ? item.text : ""} />
       </>
     );
@@ -3526,6 +3522,25 @@ function reasoningText(item: ThreadItem): string {
   const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : "";
   const content = Array.isArray(item.content) ? item.content.join("\n\n") : "";
   return [summary, content].filter(Boolean).join("\n\n");
+}
+
+function friendlyPhaseLabel(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const words = value
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .split(" ");
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+function updateBrowserPath(path: string) {
+  if (typeof window === "undefined" || window.location.pathname === path) {
+    return;
+  }
+  window.history.pushState(window.history.state, "", path);
 }
 
 type ToolState = Parameters<typeof ToolHeader>[0]["state"];

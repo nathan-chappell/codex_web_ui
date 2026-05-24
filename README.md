@@ -89,6 +89,19 @@ another npm package spec to test a different published package,
 `CODEX_WEB_UI_DOCKER_IMAGE=<tag>` to change the local image tag, or
 `CODEX_WEB_UI_DOCKER_SKIP_BUILD=1` to reuse an existing image.
 
+To smoke-test the published npm deployment path, install the package into a
+temporary directory and run it with a fresh app-server socket:
+
+```bash
+npm run test:deployment
+```
+
+The deployment smoke defaults to `@nchappell/codex-web-ui@<package.json
+version>`, binds `0.0.0.0:4546`, uses password `codex`, verifies `/api/auth`
+and password login, then stops the temporary server. Set
+`CODEX_WEB_UI_DEPLOYMENT_NPM_SPEC`, `CODEX_WEB_UI_DEPLOYMENT_PORT`, or
+`CODEX_WEB_UI_DEPLOYMENT_KEEP=1` to adjust it.
+
 ## CLI
 
 The npm package exposes a `codex-web-ui` command:
