@@ -833,7 +833,7 @@ async function recoverAppServerSidecar(): Promise<string> {
   if (!socket) {
     throw new Error("CODEX_APP_SERVER_SOCKET is not configured; this server owns its app-server connection.");
   }
-  const binPath = path.join(projectRoot, "bin", "codex-web-ui.js");
+  const binPath = process.env.CODEX_WEB_UI_BIN || path.join(projectRoot, "bin", "codex-web-ui.js");
   return new Promise((resolve, reject) => {
     execFile(process.execPath, [binPath, "app-server", "recover", "--socket", socket], { cwd: projectRoot, env: process.env, timeout: 12_000 }, (error, stdout, stderr) => {
       const output = [stdout, stderr].filter(Boolean).join("\n").trim();

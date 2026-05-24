@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.7
+
+- Fixed app-server recovery from installed packages by passing the real CLI path into the Next server.
+- Changed app-server health checks to verify the Unix socket accepts the WebSocket upgrade instead of only accepting a raw socket connection.
+
 ## 1.0.6
 
 - Removed thread-list multi-select and bulk archive controls.

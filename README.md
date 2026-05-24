@@ -345,9 +345,10 @@ npm run app-server:recover
 npm run app-server:status
 ```
 
-`app-server:recover` treats a live PID without a connectable socket as
-degraded, restarts the sidecar, and waits until the Unix socket accepts
-connections. Use it when the UI reports `connect ENOENT ...codex-app-server.sock`.
+`app-server:recover` treats a live PID without a websocket-ready socket as
+degraded, restarts the sidecar, and waits until the Unix socket accepts the
+app-server WebSocket upgrade. Use it when the UI reports `connect ENOENT
+...codex-app-server.sock` or `Unix socket closed before WebSocket upgrade`.
 
 For MCP OAuth from a phone or another machine, Codex Web UI relays OAuth
 callbacks through the currently used Web UI origin. When an MCP OAuth login

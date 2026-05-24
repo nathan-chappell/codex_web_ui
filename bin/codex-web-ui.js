@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { accessSync, chmodSync, closeSync, constants as fsConstants, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -98,6 +98,7 @@ setEnv(env, "CODEX_WEB_UI_AUTH_SECRET", pick("authSecret", "CODEX_WEB_UI_AUTH_SE
 setEnv(env, "CODEX_WEB_UI_ALLOWED_ORIGINS", pick("allowedOrigins", "CODEX_WEB_UI_ALLOWED_ORIGINS"));
 setEnv(env, "CODEX_WEB_UI_DATA_DIR", dataDir);
 setEnv(env, "CODEX_WEB_UI_UPLOAD_DIR", uploadDir);
+setEnv(env, "CODEX_WEB_UI_BIN", fileURLToPath(import.meta.url));
 setEnv(env, "CODEX_APP_SERVER_SOCKET", appServerSocket);
 setEnv(env, "CODEX_COMMAND", codexCommand);
 setEnv(env, "CODEX_CWD", codexCwd);
@@ -373,11 +374,11 @@ async function runDoctorCommand(options) {
   }
 
   const socketPresent = existsSync(options.appServerSocket);
-  const socketConnectable = socketPresent ? await isSocketConnectable(options.appServerSocket, 500) : false;
+  const socketReady = socketPresent ? await isSocketWebSocketReady(options.appServerSocket, 500) : false;
   checks.push([
     "app-server socket",
-    `${options.appServerSocket}${socketConnectable ? " (connectable)" : socketPresent ? " (present, not connectable)" : " (missing)"}`,
-    options.externalAppServer ? socketConnectable : true
+    `${options.appServerSocket}${socketReady ? " (websocket ready)" : socketPresent ? " (present, not websocket-ready)" : " (missing)"}`,
+    options.externalAppServer ? socketReady : true
   ]);
 
   console.log("Codex Web UI doctor");
@@ -385,7 +386,7 @@ async function runDoctorCommand(options) {
     console.log(`${ok ? "ok  " : "fail"} ${name}: ${detail}`);
   }
   console.log("");
-  if (!socketConnectable && !options.externalAppServer) {
+  if (!socketReady && !options.externalAppServer) {
     console.log("The main `codex-web-ui` command will try to start or recover the managed app-server sidecar.");
   }
   if (!options.password && isLoopbackHost(options.host)) {
@@ -410,12 +411,12 @@ function appServerControlOptions({ command, logFile, pidFile, socket }) {
 async function startAppServer(options) {
   const existingPid = readPid(options.pidFile);
   if (existingPid && isPidRunning(existingPid)) {
-    if (await isSocketConnectable(options.socket, 750)) {
+    if (await isSocketWebSocketReady(options.socket, 750)) {
       console.log(`codex app-server already running: pid=${existingPid}`);
-      console.log(`socket: ${options.socket} (connectable)`);
+      console.log(`socket: ${options.socket} (websocket ready)`);
       return;
     }
-    console.warn(`codex app-server pid ${existingPid} is present, but the socket is not connectable; restarting`);
+    console.warn(`codex app-server pid ${existingPid} is present, but the socket is not websocket-ready; restarting`);
     await stopAppServer(options, { quiet: true });
   }
   mkdirSync(dirname(options.socket), { recursive: true });
@@ -442,7 +443,7 @@ async function startAppServer(options) {
     fail(`Timed out waiting for codex app-server socket: ${options.socket}. Check ${options.logFile}`);
   }
   console.log(`codex app-server started: pid=${child.pid}`);
-  console.log(`socket: ${options.socket} (connectable)`);
+  console.log(`socket: ${options.socket} (websocket ready)`);
   console.log(`log: ${options.logFile}`);
 }
 
@@ -473,9 +474,9 @@ async function stopAppServer(options, { quiet = false } = {}) {
 
 async function recoverAppServer(options) {
   const pid = readPid(options.pidFile);
-  if (pid && isPidRunning(pid) && await isSocketConnectable(options.socket, 750)) {
+  if (pid && isPidRunning(pid) && await isSocketWebSocketReady(options.socket, 750)) {
     console.log(`codex app-server healthy: pid=${pid}`);
-    console.log(`socket: ${options.socket} (connectable)`);
+    console.log(`socket: ${options.socket} (websocket ready)`);
     return;
   }
   await stopAppServer(options, { quiet: true });
@@ -487,8 +488,8 @@ async function printAppServerStatus(options) {
   const pid = readPid(options.pidFile);
   const running = Boolean(pid && isPidRunning(pid));
   const socketPresent = existsSync(options.socket);
-  const socketConnectable = socketPresent ? await isSocketConnectable(options.socket, 500) : false;
-  const state = running && socketConnectable
+  const socketReady = socketPresent ? await isSocketWebSocketReady(options.socket, 500) : false;
+  const state = running && socketReady
     ? "running"
     : running
       ? "degraded"
@@ -496,7 +497,7 @@ async function printAppServerStatus(options) {
         ? "stopped with stale socket"
         : "stopped";
   console.log(`codex app-server ${state}${pid ? `: pid=${pid}` : ""}`);
-  console.log(`socket: ${options.socket}${socketConnectable ? " (connectable)" : socketPresent ? " (present, not connectable)" : " (missing)"}`);
+  console.log(`socket: ${options.socket}${socketReady ? " (websocket ready)" : socketPresent ? " (present, not websocket-ready)" : " (missing)"}`);
   console.log(`pid file: ${options.pidFile}`);
   console.log(`log: ${options.logFile}`);
 }
@@ -546,7 +547,7 @@ function waitForSocket(socket, timeoutMs) {
   const startedAt = Date.now();
   return new Promise((resolve) => {
     const tick = async () => {
-      if (await isSocketConnectable(socket, 250)) {
+      if (await isSocketWebSocketReady(socket, 250)) {
         resolve(true);
         return;
       }
@@ -560,25 +561,56 @@ function waitForSocket(socket, timeoutMs) {
   });
 }
 
-function isSocketConnectable(socket, timeoutMs) {
+function isSocketWebSocketReady(socket, timeoutMs) {
   if (!existsSync(socket)) {
     return Promise.resolve(false);
   }
   return new Promise((resolve) => {
     const client = createConnection(socket);
-    const timer = setTimeout(() => {
+    const key = randomBytes(16).toString("base64");
+    const expectedAccept = createHash("sha1")
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest("base64");
+    let buffer = Buffer.alloc(0);
+    let settled = false;
+    const settle = (ready) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
       client.destroy();
-      resolve(false);
-    }, timeoutMs);
+      resolve(ready);
+    };
+    const timer = setTimeout(() => settle(false), timeoutMs);
     client.once("connect", () => {
-      clearTimeout(timer);
-      client.end();
-      resolve(true);
+      client.write([
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Key: ${key}`,
+        "Sec-WebSocket-Version: 13",
+        "",
+        ""
+      ].join("\r\n"));
     });
-    client.once("error", () => {
-      clearTimeout(timer);
-      resolve(false);
+    client.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        return;
+      }
+      const headerText = buffer.subarray(0, headerEnd).toString("utf8");
+      const lines = headerText.split("\r\n");
+      const headers = Object.fromEntries(lines.slice(1).map((line) => {
+        const index = line.indexOf(":");
+        return index === -1 ? ["", ""] : [line.slice(0, index).trim().toLowerCase(), line.slice(index + 1).trim()];
+      }).filter(([name]) => name));
+      settle(lines[0]?.startsWith("HTTP/1.1 101") && headers["sec-websocket-accept"] === expectedAccept);
     });
+    client.once("error", () => settle(false));
+    client.once("close", () => settle(false));
   });
 }
 
