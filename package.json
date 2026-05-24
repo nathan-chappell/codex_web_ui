@@ -27,6 +27,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "overrides": {
+    "postcss": "8.5.14"
+  },
   "files": [
     "app",
     "bin",
@@ -55,6 +58,8 @@
     "app-server:recover": "node ./bin/codex-web-ui.js app-server recover",
     "app-server:status": "node ./bin/codex-web-ui.js app-server status",
     "check": "tsc --noEmit",
+    "test:security": "node --import tsx --test tests/security/*.test.ts",
+    "test:docker": "node scripts/docker-smoke.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "prepack": "npm run build"

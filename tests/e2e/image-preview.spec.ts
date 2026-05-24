@@ -33,7 +33,18 @@ async function mockCodexApi(page: Page) {
       body: JSON.stringify({
         ok: true,
         authenticated: true,
-        mode: "password"
+        mode: "password",
+        warning: null,
+        user: { id: "test", email: null, name: "Test user", role: "admin" },
+        tokenExpiresAt: Date.now() + 60 * 60 * 1000,
+        permissionPolicy: {
+          defaultApprovalPolicy: "on-request",
+          defaultSandbox: "workspace-write",
+          locked: false,
+          unsafePermissions: true,
+          allowedApprovalPolicies: ["on-request", "untrusted", "on-failure", "never"],
+          allowedSandboxes: ["read-only", "workspace-write", "danger-full-access"]
+        }
       })
     })
   );

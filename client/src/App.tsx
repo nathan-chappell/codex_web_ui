@@ -4925,11 +4925,11 @@ function approvalDecisionPayload(request: ClientRequest, decision: ApprovalDecis
 }
 
 function fullControlDecision(request: ClientRequest): ApprovalDecision {
-  if (execpolicyDecision(request)) {
-    return "acceptWithExecpolicyAmendment";
-  }
   if (hasAvailableDecision(request, "acceptForSession")) {
     return "acceptForSession";
+  }
+  if (execpolicyDecision(request)) {
+    return "acceptWithExecpolicyAmendment";
   }
   return "accept";
 }

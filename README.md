@@ -72,6 +72,19 @@ The image includes the official Codex CLI and stores Web UI runtime data under
 Codex login. Do not bake passwords, OpenAI keys, tunnel tokens, or Codex
 credentials into the image.
 
+From a repository checkout, smoke-test the container wiring without requiring a
+Codex login or a live app-server socket:
+
+```bash
+npm run test:docker
+```
+
+The Docker smoke builds `codex-web-ui:smoke`, starts it on port `4555` with a
+temporary data directory and `--external-app-server`, verifies `/threads`,
+`/api/auth`, and password login, then removes the container and temp volumes.
+Set `CODEX_WEB_UI_DOCKER_SKIP_BUILD=1` to reuse an existing image or
+`CODEX_WEB_UI_DOCKER_IMAGE=<tag>` to test another tag.
+
 ## CLI
 
 The npm package exposes a `codex-web-ui` command:
@@ -266,6 +279,13 @@ For development, run Next directly:
 
 ```bash
 npm run dev
+```
+
+Security regression tests cover the API auth boundary and file-explorer path
+containment:
+
+```bash
+npm run test:security
 ```
 
 For the full local service, run the Codex app-server sidecar as a separate
