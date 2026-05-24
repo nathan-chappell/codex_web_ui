@@ -1,5 +1,5 @@
 {
-  "name": "codex-web-ui",
+  "name": "@nchappell/codex-web-ui",
   "version": "1.0.3",
   "private": false,
   "description": "Mobile-friendly web UI client for the official Codex app-server.",

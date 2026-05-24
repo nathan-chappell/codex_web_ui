@@ -21,7 +21,7 @@ The app is a Next.js App Router application with Tailwind, shadcn/ui, and AI Ele
 ## Install from npm
 
 ```bash
-npm install -g codex-web-ui
+npm install -g @nchappell/codex-web-ui
 codex-web-ui init
 codex-web-ui doctor
 codex-web-ui
@@ -83,11 +83,11 @@ npm run test:docker
 The Docker smoke builds `codex-web-ui:smoke`, starts it on port `4555` with a
 temporary data directory and `--external-app-server`, verifies `/threads`,
 `/api/auth`, and password login, then removes the container and temp volumes.
-By default it builds with `codex-web-ui@<package.json version>` from npm. Set
-`CODEX_WEB_UI_DOCKER_NPM_SPEC=codex-web-ui@latest` or another npm package spec
-to test a different published package, `CODEX_WEB_UI_DOCKER_IMAGE=<tag>` to
-change the local image tag, or `CODEX_WEB_UI_DOCKER_SKIP_BUILD=1` to reuse an
-existing image.
+By default it builds with `@nchappell/codex-web-ui@<package.json version>` from
+npm. Set `CODEX_WEB_UI_DOCKER_NPM_SPEC=@nchappell/codex-web-ui@latest` or
+another npm package spec to test a different published package,
+`CODEX_WEB_UI_DOCKER_IMAGE=<tag>` to change the local image tag, or
+`CODEX_WEB_UI_DOCKER_SKIP_BUILD=1` to reuse an existing image.
 
 ## CLI
 
