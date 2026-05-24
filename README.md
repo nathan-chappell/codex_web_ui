@@ -243,6 +243,13 @@ The password gate is intentionally simple and server-side. For real internet
 exposure, put this behind HTTPS, use strong secrets, and restrict allowed
 origins to origins you actually use.
 
+Cloudflare Tunnel has worked well for this use case in testing. A typical setup
+keeps Codex Web UI bound to a local port, exposes it with `cloudflared tunnel
+--url http://127.0.0.1:4545`, and sets `CODEX_WEB_UI_ALLOWED_ORIGINS` to the
+resulting `https://*.trycloudflare.com` or named tunnel origin. Treat the tunnel
+URL as sensitive, keep password auth enabled, and prefer a named tunnel or
+access policy for longer-lived use.
+
 ## Persistence
 
 The server writes:
