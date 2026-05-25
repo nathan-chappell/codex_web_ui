@@ -68,6 +68,30 @@ test("CORS rejects explicitly disallowed foreign origins before auth", async () 
   assert.equal(response.status, 403);
 });
 
+test("CORS allows same-origin requests and configured origins", async () => {
+  const sameOrigin = await request("GET", "/api/auth", undefined, {
+    Origin: "http://127.0.0.1:4545"
+  });
+  assert.equal(sameOrigin.status, 200);
+  assert.equal(sameOrigin.headers.get("Access-Control-Allow-Origin"), "http://127.0.0.1:4545");
+
+  const previous = process.env.CODEX_WEB_UI_ALLOWED_ORIGINS;
+  process.env.CODEX_WEB_UI_ALLOWED_ORIGINS = "http://localhost:*";
+  try {
+    const configured = await request("GET", "/api/auth", undefined, {
+      Origin: "http://localhost:3000"
+    });
+    assert.equal(configured.status, 200);
+    assert.equal(configured.headers.get("Access-Control-Allow-Origin"), "http://localhost:3000");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.CODEX_WEB_UI_ALLOWED_ORIGINS;
+    } else {
+      process.env.CODEX_WEB_UI_ALLOWED_ORIGINS = previous;
+    }
+  }
+});
+
 test("OAuth callback remains public but single-use relay state is required", async () => {
   const response = await request("GET", "/api/mcp/oauth/callback/test?state=missing");
   assert.equal(response.status, 403);

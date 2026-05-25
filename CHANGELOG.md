@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.11
+
+- Simplified global permission config so full-control unlocks per-thread escalation while restricted defaults remain `on-request` plus `workspace-write`.
+- Added explicit CORS allow/reject security tests and permission-mode regression tests.
+
 ## 1.0.10
 
 - Removed the project-specific agriculture ontology MCP defaults from the add-server form.

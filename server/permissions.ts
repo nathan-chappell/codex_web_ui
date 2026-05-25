@@ -4,6 +4,7 @@ export type ApprovalPolicy = "on-request" | "untrusted" | "on-failure" | "never"
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export interface PermissionPolicy {
+  mode: "restricted" | "full-control";
   defaultApprovalPolicy: ApprovalPolicy;
   defaultSandbox: SandboxMode;
   locked: boolean;
@@ -32,6 +33,7 @@ export function getPermissionPolicy(): PermissionPolicy {
   }
 
   return {
+    mode: unsafePermissions ? "full-control" : "restricted",
     defaultApprovalPolicy,
     defaultSandbox,
     locked: booleanEnv("CODEX_WEB_UI_LOCK_PERMISSIONS", false),

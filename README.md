@@ -164,13 +164,16 @@ with `codex-web-ui app-server start`, or run the official app-server yourself
 and point `--app-server-socket` at that Unix socket. Startup fails fast if the
 socket is not websocket-ready.
 
-Default permissions are intentionally conservative: `on-request` approval and
-`workspace-write` sandbox. `danger-full-access`, `on-failure`, and `never`
-require `--unsafe-permissions` or `CODEX_WEB_UI_UNSAFE_PERMISSIONS=1`.
-For the common trusted local-network case, `--full-control` is a shortcut for
-unsafe permissions, `never` approval, and the `danger-full-access` sandbox. If
-`approvalPolicy`, `sandbox`, or `full-control` is specified by CLI, environment,
-or config, the backend locks that policy and browser requests cannot override it.
+Default permissions are intentionally restricted: new turns start with
+`on-request` approval and the `workspace-write` sandbox. Security is primarily
+chosen per thread in the UI. The global `--full-control` / `permissions:
+"full-control"` switch only unlocks the nuclear per-thread option; it does not
+make every new thread start with `approvalPolicy=never` or
+`danger-full-access`. The UI can then upgrade a single thread from an approval
+request or from the thread settings.
+
+Legacy `approvalPolicy` and `sandbox` config keys still work. If either is set
+globally, the backend locks that policy and browser requests cannot override it.
 Codex approval requests are surfaced in the UI approval tray and answered
 through the authenticated `/api/client-requests/respond` endpoint.
 
@@ -197,16 +200,14 @@ Example `codex-webgui.json`:
   "cwd": "/path/to/project",
   "model": "gpt-5.5",
   "reasoningEffort": "high",
-  "approvalPolicy": "on-request",
-  "sandbox": "workspace-write",
-  "unsafePermissions": false,
+  "permissions": "restricted",
   "dataDir": "~/.codex-webgui/data",
   "uploadDir": "~/.codex-webgui/data/uploads",
   "allowedOrigins": "http://localhost:*,http://127.0.0.1:*"
 }
 ```
 
-To opt into full local control from config, use either:
+To opt into full local control from config:
 
 ```json
 {
@@ -216,10 +217,10 @@ To opt into full local control from config, use either:
 }
 ```
 
-Full control is intentionally broad: it starts future turns with
+Full control is intentionally broad: it allows individual threads to use
 `approvalPolicy: "never"` and `sandbox: "danger-full-access"`. A turn that was
-already active before the change can still surface approval requests because
-Codex received its approval policy when that turn started.
+already active before a thread is upgraded can still surface approval requests
+because Codex received its approval policy when that turn started.
 
 Prefer `CODEX_WEB_UI_PASSWORD` and `CODEX_WEB_UI_AUTH_SECRET` environment
 variables for secrets instead of storing them in the config file.

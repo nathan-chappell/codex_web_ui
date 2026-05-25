@@ -51,19 +51,22 @@ const codexCommand = pick("codexCommand", "CODEX_COMMAND", "codex");
 const appServerSocket = resolvePath(pick("appServerSocket", "CODEX_APP_SERVER_SOCKET", defaultAppServerSocket));
 const externalAppServer = pickBoolean("externalAppServer", "CODEX_WEB_UI_EXTERNAL_APP_SERVER", false);
 const requestedSandbox = pick("sandbox", "CODEX_WEB_UI_SANDBOX", "workspace-write");
-const fullControl = pickBoolean("fullControl", "CODEX_WEB_UI_FULL_CONTROL", false) || requestedSandbox === "full-control" || pick("permissionPreset", "CODEX_WEB_UI_PERMISSION_PRESET") === "full-control";
+const permissionPreset = normalizePermissionPreset(
+  options.permissionPreset
+  ?? env.CODEX_WEB_UI_PERMISSION_PRESET
+  ?? env.CODEX_WEB_UI_PERMISSION_MODE
+  ?? config.permissionPreset
+  ?? "restricted"
+);
+const fullControl = pickBoolean("fullControl", "CODEX_WEB_UI_FULL_CONTROL", false) || requestedSandbox === "full-control" || permissionPreset === "full-control";
+const permissionMode = fullControl ? "full-control" : "restricted";
 const unsafePermissions = fullControl || pickBoolean("unsafePermissions", "CODEX_WEB_UI_UNSAFE_PERMISSIONS", false);
-const approvalPolicy = pick("approvalPolicy", "CODEX_WEB_UI_APPROVAL_POLICY", fullControl ? "never" : "on-request");
-const sandbox = fullControl ? "danger-full-access" : requestedSandbox;
+const approvalPolicy = pick("approvalPolicy", "CODEX_WEB_UI_APPROVAL_POLICY", "on-request");
+const sandbox = requestedSandbox === "full-control" ? "danger-full-access" : requestedSandbox;
 let password = pick("password", "CODEX_WEB_UI_PASSWORD");
 let generatedPassword = "";
-const permissionsSpecified = hasPermissionConfig(options) || hasPermissionConfig(config) || Boolean(
-  env.CODEX_WEB_UI_APPROVAL_POLICY
-  || env.CODEX_WEB_UI_SANDBOX
-  || env.CODEX_WEB_UI_FULL_CONTROL
-  || env.CODEX_WEB_UI_PERMISSION_PRESET
-  || env.CODEX_WEB_UI_LOCK_PERMISSIONS
-);
+const lockPermissionsDefault = hasLockedPermissionConfig(options) || hasLockedPermissionConfig(config) || Boolean(env.CODEX_WEB_UI_APPROVAL_POLICY || env.CODEX_WEB_UI_SANDBOX);
+const permissionsLocked = pickBoolean("lockPermissions", "CODEX_WEB_UI_LOCK_PERMISSIONS", lockPermissionsDefault);
 
 if (command === "doctor") {
   await runDoctorCommand({
@@ -78,6 +81,8 @@ if (command === "doctor") {
     host,
     packageRoot,
     password,
+    permissionPreset: permissionMode,
+    permissionsLocked,
     port,
     sandbox,
     unsafePermissions,
@@ -105,8 +110,9 @@ setEnv(env, "CODEX_MODEL", pick("model", "CODEX_MODEL"));
 setEnv(env, "CODEX_REASONING_EFFORT", pick("reasoningEffort", "CODEX_REASONING_EFFORT"));
 setEnv(env, "CODEX_WEB_UI_APPROVAL_POLICY", approvalPolicy);
 setEnv(env, "CODEX_WEB_UI_SANDBOX", sandbox);
+setEnv(env, "CODEX_WEB_UI_PERMISSION_MODE", permissionMode);
 setEnv(env, "CODEX_WEB_UI_UNSAFE_PERMISSIONS", unsafePermissions ? "1" : "0");
-setEnv(env, "CODEX_WEB_UI_LOCK_PERMISSIONS", permissionsSpecified ? "1" : "0");
+setEnv(env, "CODEX_WEB_UI_LOCK_PERMISSIONS", permissionsLocked ? "1" : "0");
 
 validatePort(port);
 validatePermissionOptions({ approvalPolicy, sandbox, unsafePermissions });
@@ -138,7 +144,7 @@ console.log(`codex-web-ui app cwd: ${packageRoot}`);
 console.log(`codex default cwd: ${env.CODEX_CWD}`);
 console.log(`runtime data dir: ${env.CODEX_WEB_UI_DATA_DIR}`);
 console.log(`codex app-server socket: ${env.CODEX_APP_SERVER_SOCKET}`);
-console.log(`permissions: approval=${env.CODEX_WEB_UI_APPROVAL_POLICY}, sandbox=${env.CODEX_WEB_UI_SANDBOX}${env.CODEX_WEB_UI_LOCK_PERMISSIONS === "1" ? ", locked" : ""}${unsafePermissions ? ", unsafe enabled" : ""}`);
+console.log(`permissions: mode=${env.CODEX_WEB_UI_PERMISSION_MODE}, default approval=${env.CODEX_WEB_UI_APPROVAL_POLICY}, default sandbox=${env.CODEX_WEB_UI_SANDBOX}${env.CODEX_WEB_UI_LOCK_PERMISSIONS === "1" ? ", locked" : ""}${unsafePermissions ? ", unsafe enabled" : ""}`);
 if (configPath) {
   console.log(`config file: ${configPath}`);
 }
@@ -169,8 +175,10 @@ function parseArgs(args) {
         "full-control": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         host: { type: "string" },
+        "lock-permissions": { type: "boolean" },
         model: { type: "string" },
         password: { type: "string" },
+        permissions: { type: "string" },
         port: { type: "string" },
         "approval-policy": { type: "string" },
         "reasoning-effort": { type: "string" },
@@ -194,8 +202,10 @@ function parseArgs(args) {
       fullControl: values["full-control"],
       help: values.help,
       host: values.host,
+      lockPermissions: values["lock-permissions"],
       model: values.model,
       password: values.password,
+      permissionPreset: values.permissions,
       port: values.port,
       reasoningEffort: values["reasoning-effort"] ?? values.effort,
       sandbox: values.sandbox,
@@ -226,6 +236,7 @@ function parseInitArgs(args) {
         host: { type: "string" },
         model: { type: "string" },
         password: { type: "string" },
+        permissions: { type: "string" },
         port: { type: "string" },
         "reasoning-effort": { type: "string" },
         "upload-dir": { type: "string" }
@@ -244,6 +255,7 @@ function parseInitArgs(args) {
       host: values.host,
       model: values.model,
       password: values.password,
+      permissionPreset: values.permissions,
       port: values.port,
       reasoningEffort: values["reasoning-effort"] ?? values.effort,
       uploadDir: values["upload-dir"]
@@ -294,6 +306,7 @@ async function runInitCommand(options) {
   if (existsSync(target) && !options.force) {
     fail(`Config already exists: ${target}. Use --force to overwrite it.`);
   }
+  const permissionPreset = normalizePermissionPreset(options.permissionPreset ?? (options.fullControl ? "full-control" : "restricted"));
   const dataDir = options.dataDir ?? "~/.codex-webgui/data";
   const config = cleanObject({
     host: options.host ?? "127.0.0.1",
@@ -304,10 +317,7 @@ async function runInitCommand(options) {
     cwd: options.cwd ? resolvePath(options.cwd) : launchCwd,
     model: options.model ?? "gpt-5.5",
     reasoningEffort: options.reasoningEffort ?? "high",
-    permissions: options.fullControl ? "full-control" : undefined,
-    approvalPolicy: options.fullControl ? undefined : "on-request",
-    sandbox: options.fullControl ? undefined : "workspace-write",
-    unsafePermissions: options.fullControl ? undefined : false,
+    permissions: permissionPreset,
     dataDir,
     uploadDir: options.uploadDir ?? "~/.codex-webgui/data/uploads",
     allowedOrigins: options.allowedOrigins ?? "http://localhost:*,http://127.0.0.1:*"
@@ -379,7 +389,11 @@ async function runDoctorCommand(options) {
   checks.push(["codex cwd", options.codexCwd, existsSync(options.codexCwd)]);
   checks.push(["auth password", options.password ? "configured" : "not configured; start will generate a temporary loopback password", Boolean(options.password) || isLoopbackHost(options.host)]);
   checks.push(["host safety", `${options.host}:${options.port}`, isLoopbackHost(options.host) || Boolean(options.password)]);
-  checks.push(["permissions", `approval=${options.approvalPolicy}, sandbox=${options.sandbox}${options.fullControl ? ", full-control" : ""}`, permissionOptionsAreValid(options)]);
+  checks.push([
+    "permissions",
+    `mode=${options.permissionPreset}, default approval=${options.approvalPolicy}, default sandbox=${options.sandbox}${options.permissionsLocked ? ", locked" : ""}${options.unsafePermissions ? ", unsafe enabled" : ""}`,
+    permissionOptionsAreValid(options)
+  ]);
 
   const codex = await checkCommand(options.codexCommand, ["--version"]);
   checks.push(["codex command", codex.detail, codex.ok]);
@@ -719,6 +733,7 @@ function normalizeConfig(raw) {
     password: raw.password,
     port: raw.port,
     reasoningEffort: raw.reasoningEffort ?? raw["reasoning-effort"] ?? raw.effort,
+    lockPermissions: raw.lockPermissions ?? raw["lock-permissions"],
     fullControl: raw.fullControl ?? raw["full-control"],
     permissionPreset: raw.permissionPreset ?? raw["permission-preset"] ?? raw.permissions,
     sandbox: raw.sandbox,
@@ -765,8 +780,19 @@ function permissionOptionsAreValid(options) {
   return approvalPolicies.has(options.approvalPolicy) && sandboxes.has(options.sandbox);
 }
 
-function hasPermissionConfig(value) {
-  return Boolean(value && (value.approvalPolicy !== undefined || value.sandbox !== undefined || value.fullControl !== undefined || value.permissionPreset !== undefined));
+function hasLockedPermissionConfig(value) {
+  return Boolean(value && (value.approvalPolicy !== undefined || value.sandbox !== undefined));
+}
+
+function normalizePermissionPreset(value) {
+  const raw = String(value ?? "restricted").trim().toLowerCase();
+  if (!raw || raw === "restricted" || raw === "safe") {
+    return "restricted";
+  }
+  if (raw === "full-control" || raw === "full_control" || raw === "nuclear" || raw === "unsafe") {
+    return "full-control";
+  }
+  fail(`Invalid permissions mode: ${value}. Use restricted or full-control.`);
 }
 
 function validateSafety({ host, password, allowPublicWithoutPassword }) {
@@ -871,13 +897,14 @@ Options:
   --cwd <path>                  Default Codex working directory
   --model <model>               Default Codex model. Default: gpt-5.5
   --effort <effort>             Default reasoning effort. Default: high
+  --permissions <mode>          restricted or full-control. Default: restricted
   --approval-policy <policy>    on-request, untrusted; unsafe also allows
                                 on-failure and never. Default: on-request
   --sandbox <mode>              read-only or workspace-write. Default:
                                 workspace-write
   --full-control                Shortcut for --unsafe-permissions,
-                                approval-policy never, and
-                                danger-full-access sandbox
+                                allowing per-thread danger-full-access and
+                                approval-policy never
   --unsafe-permissions          Allow danger-full-access sandbox and more
                                 permissive approval policies
   --data-dir <path>             Runtime data/log directory
@@ -893,7 +920,7 @@ Defaults:
   Data dir:                     ~/.codex-webgui/data
   Upload dir:                   ~/.codex-webgui/data/uploads
   App-server socket:            ~/.codex-webgui/codex-app-server.sock
-  Permissions:                  on-request + workspace-write
+  Permissions:                  restricted mode; per-thread on-request + workspace-write
 
 First run:
   codex-web-ui init             Write ~/.codex-webgui/config.json
@@ -905,8 +932,9 @@ If no password is configured and the host is loopback, start prints a temporary
 local password. Non-loopback hosts require a configured password.
 
 Precedence: CLI options > environment variables > config file > defaults.
-If approval-policy, sandbox, or full-control is specified by CLI/env/config,
-the server locks that policy and browser requests cannot override it.
+Full-control unlocks per-thread escalation but keeps restricted defaults.
+If approval-policy or sandbox is specified by CLI/env/config, the server locks
+that policy and browser requests cannot override it.
 `);
 }
 
@@ -927,6 +955,7 @@ Options:
                                 current working directory
   --model <model>               Default Codex model. Default: gpt-5.5
   --effort <effort>             Default reasoning effort. Default: high
+  --permissions <mode>          restricted or full-control
   --full-control                Store full-control permission preset
   --data-dir <path>             Runtime data/log directory
   --upload-dir <path>           Upload directory

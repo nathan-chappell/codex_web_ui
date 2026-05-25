@@ -1,6 +1,6 @@
 {
   "name": "@nchappell/codex-web-ui",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "private": false,
   "description": "Mobile-friendly web UI client for the official Codex app-server.",
   "license": "MIT",

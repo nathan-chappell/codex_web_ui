@@ -19,6 +19,7 @@ export interface AuthState {
 }
 
 export interface PermissionPolicy {
+  mode?: "restricted" | "full-control" | string;
   defaultApprovalPolicy: string;
   defaultSandbox: string;
   locked: boolean;
