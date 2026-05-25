@@ -14,6 +14,7 @@ import {
   GitFork,
   Home,
   KeyRound,
+  ListEnd,
   LogOut,
   MessageSquarePlus,
   Mic,
@@ -29,6 +30,7 @@ import {
   Search,
   Send,
   Settings,
+  Target,
   Trash2,
   X
 } from "lucide-react";
@@ -116,6 +118,17 @@ type ApprovalDecision = "accept" | "acceptForSession" | "acceptWithExecpolicyAme
 type MobilePane = "sessions" | "thread";
 type ThreadPaneCount = 1 | 2;
 type ThreadPermissionOverride = Pick<UiSettings, "approvalPolicy" | "sandbox">;
+type ThreadGoal = {
+  objective: string;
+  status: string;
+  tokenBudget?: number;
+};
+type GoalCommand =
+  | { type: "status" }
+  | { type: "clear" }
+  | { type: "pause" }
+  | { type: "resume" }
+  | { type: "set"; objective: string; tokenBudget?: number };
 type ToastState = {
   message: string;
   tone: "info" | "error";
@@ -1604,6 +1617,12 @@ export default function App({ initialThreadId = null }: AppProps) {
         setLoadedThreadIds((current) => new Set([...current, thread.id]));
       }
 
+      const goalCommand = parseGoalCommand(trimmedText);
+      if (goalCommand) {
+        await applyGoalCommand(thread, goalCommand);
+        return true;
+      }
+
       const currentActiveTurn = activeTurnFromThread(thread) || activeTurns[thread.id];
       if (action === "steer") {
         if (!currentActiveTurn) {
@@ -1630,6 +1649,62 @@ export default function App({ initialThreadId = null }: AppProps) {
       showToast(error);
       return false;
     }
+  }
+
+  async function applyGoalCommand(thread: Thread, command: GoalCommand): Promise<void> {
+    if (command.type === "clear") {
+      await rpc("thread/goal/clear", { threadId: thread.id });
+      patchOpenThread(thread.id, (current) => {
+        const next = { ...current };
+        delete next.goal;
+        return next;
+      });
+      showToast("Goal cleared");
+      scheduleThreadRefresh(thread.id, 500);
+      scheduleListRefresh(900);
+      return;
+    }
+
+    if (command.type === "status") {
+      const goal = parseThreadGoal(await rpc("thread/goal/get", { threadId: thread.id }));
+      showToast(goal ? `Goal: ${goal.objective}` : "No goal is set for this thread");
+      if (goal) {
+        patchOpenThread(thread.id, (current) => ({ ...current, goal }));
+      }
+      return;
+    }
+
+    if (command.type === "set") {
+      const goal = compact({
+        objective: command.objective,
+        status: "active",
+        tokenBudget: command.tokenBudget ?? null
+      });
+      const result = await rpc("thread/goal/set", { threadId: thread.id, goal });
+      const savedGoal = parseThreadGoal(result) ?? { objective: command.objective, status: "active", tokenBudget: command.tokenBudget };
+      patchOpenThread(thread.id, (current) => ({ ...current, goal: savedGoal }));
+      showToast("Goal set");
+      scheduleThreadRefresh(thread.id, 500);
+      scheduleListRefresh(900);
+      return;
+    }
+
+    const currentGoal = parseThreadGoal(await rpc("thread/goal/get", { threadId: thread.id }));
+    if (!currentGoal) {
+      throw new Error("No goal is set for this thread");
+    }
+    const status = command.type === "pause" ? "paused" : "active";
+    const goal = compact({
+      objective: currentGoal.objective,
+      status,
+      tokenBudget: currentGoal.tokenBudget ?? null
+    });
+    const result = await rpc("thread/goal/set", { threadId: thread.id, goal });
+    const savedGoal = parseThreadGoal(result) ?? { ...currentGoal, status };
+    patchOpenThread(thread.id, (current) => ({ ...current, goal: savedGoal }));
+    showToast(status === "paused" ? "Goal paused" : "Goal resumed");
+    scheduleThreadRefresh(thread.id, 500);
+    scheduleListRefresh(900);
   }
 
   async function interruptThread(thread: Thread) {
@@ -1808,6 +1883,18 @@ export default function App({ initialThreadId = null }: AppProps) {
         const mergedUsage = rememberThreadTokenUsage(threadId, tokenUsage) ?? tokenUsage;
         patchOpenThread(threadId, (thread) => ({ ...thread, tokenUsage: mergeThreadTokenUsage(mergedUsage, threadTokenUsage(thread)) ?? mergedUsage }));
       }
+    }
+    if (threadId && method === "thread/goal/updated") {
+      const goal = parseThreadGoal(params.goal ?? params);
+      patchOpenThread(threadId, (thread) => {
+        if (goal) {
+          return { ...thread, goal };
+        }
+        const next = { ...thread };
+        delete next.goal;
+        return next;
+      });
+      scheduleListRefresh(900);
     }
     if (method === "serverRequest/resolved") {
       const id = typeof params.id === "string" || typeof params.id === "number"
@@ -2210,15 +2297,17 @@ const ThreadPane = memo(function ThreadPane({
   const lastThreadViewRef = useRef("");
   const lastItemCountRef = useRef(0);
   const lastFinalAnswerCountRef = useRef(0);
-  const autoScrollRef = useRef(true);
+  const [tailEnabled, setTailEnabled] = useState(true);
+  const tailEnabledRef = useRef(true);
   const scrollFrameRef = useRef<number | null>(null);
   const itemCount = useMemo(() => countDisplayThreadItems(thread?.turns ?? []), [thread?.turns]);
   const contextUsage = useMemo(
     () => (thread ? mergeThreadTokenUsage(threadTokenUsage(thread), tokenUsage) : null),
     [thread, tokenUsage]
   );
+  const goal = threadGoal(thread);
   const handleRenderedThreadItemsChange = useCallback(() => {
-    if (autoScrollRef.current) {
+    if (tailEnabledRef.current) {
       scrollToEnd("smooth", 2);
     }
   }, []);
@@ -2249,7 +2338,7 @@ const ThreadPane = memo(function ThreadPane({
         return;
       }
       observer = new ResizeObserver(() => {
-        if (autoScrollRef.current) {
+        if (tailEnabledRef.current) {
           scrollToEnd("instant", 1);
         }
       });
@@ -2267,7 +2356,7 @@ const ThreadPane = memo(function ThreadPane({
       lastThreadViewRef.current = "";
       lastItemCountRef.current = 0;
       lastFinalAnswerCountRef.current = 0;
-      autoScrollRef.current = true;
+      setTailMode(true);
       setTopHiddenState(false);
       return;
     }
@@ -2275,12 +2364,12 @@ const ThreadPane = memo(function ThreadPane({
       lastThreadViewRef.current = thread.id;
       lastItemCountRef.current = itemCount;
       lastFinalAnswerCountRef.current = countFinalAnswerItems(thread.turns ?? []);
-      autoScrollRef.current = true;
+      setTailMode(true);
       setTopHiddenState(isMobileViewport());
       scrollToEnd("instant");
       return;
     }
-    if (itemCount > lastItemCountRef.current && autoScrollRef.current) {
+    if (itemCount > lastItemCountRef.current && tailEnabledRef.current) {
       scrollToEnd("smooth");
     }
     const finalAnswerCount = countFinalAnswerItems(thread.turns ?? []);
@@ -2300,10 +2389,8 @@ const ThreadPane = memo(function ThreadPane({
     const awayFromBottom = bottomDistance > 120;
 
     conversationScrollTopRef.current = nextTop;
-    if (nearBottom) {
-      autoScrollRef.current = true;
-    } else if (scrollingTowardHistory && awayFromBottom) {
-      autoScrollRef.current = false;
+    if (!nearBottom && scrollingTowardHistory && awayFromBottom) {
+      setTailMode(false);
     }
 
     if (isMobileViewport()) {
@@ -2327,7 +2414,6 @@ const ThreadPane = memo(function ThreadPane({
   }
 
   function scrollToEnd(behavior: ScrollBehavior = "smooth", passes = 1) {
-    autoScrollRef.current = true;
     if (scrollFrameRef.current !== null) {
       window.cancelAnimationFrame(scrollFrameRef.current);
     }
@@ -2340,7 +2426,7 @@ const ThreadPane = memo(function ThreadPane({
         }
         element.scrollTo({ top: element.scrollHeight, behavior });
         conversationScrollTopRef.current = Math.max(0, element.scrollHeight - element.clientHeight);
-        if (remaining > 1 && autoScrollRef.current) {
+        if (remaining > 1 && tailEnabledRef.current) {
           applyScroll(remaining - 1);
           return;
         }
@@ -2350,6 +2436,14 @@ const ThreadPane = memo(function ThreadPane({
       });
     };
     applyScroll(Math.max(1, passes));
+  }
+
+  function setTailMode(value: boolean) {
+    tailEnabledRef.current = value;
+    setTailEnabled(value);
+    if (value) {
+      scrollToEnd("smooth", 2);
+    }
   }
 
   function scheduleChromeState(nextState: { topHidden?: boolean }) {
@@ -2385,6 +2479,7 @@ const ThreadPane = memo(function ThreadPane({
           <div className="thread-title-block">
             <StatusBadge value={statusType(thread)} />
             <EditableThreadTitle thread={thread} onRename={(name) => onRenameThread(thread, name)} />
+            {goal && <p className="thread-goal" title={goal.objective}>Goal: {goal.objective}</p>}
             {thread.cwd && <p>{thread.cwd}</p>}
           </div>
         ) : isLoading ? (
@@ -2396,6 +2491,18 @@ const ThreadPane = memo(function ThreadPane({
             <h2>Select a thread</h2>
             <p>Choose a thread from the list or selector.</p>
           </div>
+        )}
+        {thread && (
+          <button
+            className={`thread-tail-toggle ${tailEnabled ? "active" : ""}`}
+            type="button"
+            aria-pressed={tailEnabled}
+            onClick={() => setTailMode(!tailEnabled)}
+            title={tailEnabled ? "Stop tailing new items" : "Tail new items"}
+          >
+            <ListEnd size={15} />
+            <span>Tail</span>
+          </button>
         )}
       </header>
       {thread ? (
@@ -4288,6 +4395,9 @@ const Composer = memo(function Composer({
                     <button type="button" role="menuitem" onClick={() => insertComposerMenuText("/compact")}>
                       <Minimize2 size={16} /> Compact
                     </button>
+                    <button type="button" role="menuitem" onClick={() => insertComposerMenuText("/goal ")}>
+                      <Target size={16} /> Goal
+                    </button>
                     <button type="button" role="menuitem" onClick={() => runComposerMenuAction(onArchive)}>
                       <Archive size={16} /> {archiveLabel}
                     </button>
@@ -4799,6 +4909,71 @@ function approvalTitle(method: string): string {
 
 function titleForThread(thread: Thread): string {
   return thread.name || thread.preview || thread.id;
+}
+
+function threadGoal(thread: Thread | null): ThreadGoal | null {
+  return parseThreadGoal(thread?.goal);
+}
+
+function parseThreadGoal(value: unknown): ThreadGoal | null {
+  const record = asRecord(value);
+  const goalRecord = asRecord(record.goal ?? value);
+  const objective = typeof goalRecord.objective === "string" ? goalRecord.objective.trim() : "";
+  if (!objective) {
+    return null;
+  }
+  const rawBudget = goalRecord.tokenBudget ?? goalRecord.token_budget;
+  const tokenBudget = typeof rawBudget === "number" && Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : undefined;
+  return {
+    objective,
+    status: typeof goalRecord.status === "string" && goalRecord.status.trim() ? goalRecord.status : "active",
+    ...(tokenBudget === undefined ? {} : { tokenBudget })
+  };
+}
+
+function parseGoalCommand(text: string): GoalCommand | null {
+  const match = /^\/goal(?:\s+([\s\S]*))?$/.exec(text.trim());
+  if (!match) {
+    return null;
+  }
+  const rest = (match[1] ?? "").trim();
+  if (!rest || rest.toLowerCase() === "status") {
+    return { type: "status" };
+  }
+  const normalized = rest.toLowerCase();
+  if (["clear", "reset", "remove", "unset"].includes(normalized)) {
+    return { type: "clear" };
+  }
+  if (normalized === "pause") {
+    return { type: "pause" };
+  }
+  if (normalized === "resume" || normalized === "start") {
+    return { type: "resume" };
+  }
+  const objectiveText = rest.replace(/^set\s+/i, "").trim();
+  const { objective, tokenBudget } = parseGoalObjectiveAndBudget(objectiveText);
+  if (!objective) {
+    return { type: "status" };
+  }
+  return { type: "set", objective, tokenBudget };
+}
+
+function parseGoalObjectiveAndBudget(text: string): { objective: string; tokenBudget?: number } {
+  let tokenBudget: number | undefined;
+  let objective = text
+    .replace(/(?:^|\s)--budget(?:=|\s+)(\d+)(?=\s|$)/i, (_match, value: string) => {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        tokenBudget = parsed;
+      }
+      return " ";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+  if ((objective.startsWith("\"") && objective.endsWith("\"")) || (objective.startsWith("'") && objective.endsWith("'"))) {
+    objective = objective.slice(1, -1).trim();
+  }
+  return tokenBudget === undefined ? { objective } : { objective, tokenBudget };
 }
 
 function projectNameForThread(thread: Thread): string {

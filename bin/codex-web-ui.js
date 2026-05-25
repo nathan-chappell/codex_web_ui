@@ -49,7 +49,6 @@ const uploadDir = resolvePath(pick("uploadDir", "CODEX_WEB_UI_UPLOAD_DIR", join(
 const codexCwd = resolvePath(pick("cwd", "CODEX_CWD", launchCwd));
 const codexCommand = pick("codexCommand", "CODEX_COMMAND", "codex");
 const appServerSocket = resolvePath(pick("appServerSocket", "CODEX_APP_SERVER_SOCKET", defaultAppServerSocket));
-const externalAppServer = pickBoolean("externalAppServer", "CODEX_WEB_UI_EXTERNAL_APP_SERVER", false);
 const requestedSandbox = pick("sandbox", "CODEX_WEB_UI_SANDBOX", "workspace-write");
 const permissionPreset = normalizePermissionPreset(
   options.permissionPreset
@@ -76,7 +75,6 @@ if (command === "doctor") {
     codexCwd,
     configPath,
     dataDir,
-    externalAppServer,
     fullControl,
     host,
     packageRoot,
@@ -171,7 +169,6 @@ function parseArgs(args) {
         cwd: { type: "string" },
         "data-dir": { type: "string" },
         effort: { type: "string" },
-        "external-app-server": { type: "boolean" },
         "full-control": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         host: { type: "string" },
@@ -198,7 +195,6 @@ function parseArgs(args) {
       config: values.config,
       cwd: values.cwd,
       dataDir: values["data-dir"],
-      externalAppServer: values["external-app-server"],
       fullControl: values["full-control"],
       help: values.help,
       host: values.host,
@@ -727,7 +723,6 @@ function normalizeConfig(raw) {
     codexCommand: raw.codexCommand ?? raw["codex-command"],
     cwd: raw.cwd,
     dataDir: raw.dataDir ?? raw["data-dir"],
-    externalAppServer: raw.externalAppServer ?? raw["external-app-server"],
     host: raw.host,
     model: raw.model,
     password: raw.password,
@@ -891,22 +886,26 @@ Options:
   --allowed-origins <csv>       Set CODEX_WEB_UI_ALLOWED_ORIGINS
   --app-server-socket <path>    Codex app-server Unix socket. Default:
                                 ~/.codex-webgui/codex-app-server.sock
-  --external-app-server         Deprecated no-op; app-server is always external
-                                to the web process
   --codex-command <command>     Codex command. Default: codex
   --cwd <path>                  Default Codex working directory
   --model <model>               Default Codex model. Default: gpt-5.5
   --effort <effort>             Default reasoning effort. Default: high
-  --permissions <mode>          restricted or full-control. Default: restricted
-  --approval-policy <policy>    on-request, untrusted; unsafe also allows
-                                on-failure and never. Default: on-request
+  --permissions <mode>          Preset: restricted or full-control. Default:
+                                restricted. full-control only unlocks the
+                                per-thread nuclear option; it does not change
+                                default approval/sandbox values.
+  --approval-policy <policy>    Low-level default approval policy. Safe values:
+                                on-request, untrusted. With --unsafe-permissions:
+                                on-failure, never are also accepted. Setting
+                                this locks browser overrides.
   --sandbox <mode>              read-only or workspace-write. Default:
                                 workspace-write
-  --full-control                Shortcut for --unsafe-permissions,
-                                allowing per-thread danger-full-access and
-                                approval-policy never
-  --unsafe-permissions          Allow danger-full-access sandbox and more
-                                permissive approval policies
+  --full-control                Shortcut for --permissions full-control and
+                                --unsafe-permissions, enabling per-thread
+                                danger-full-access / approval-policy never.
+  --unsafe-permissions          Allow low-level unsafe defaults such as
+                                danger-full-access or approval-policy never.
+                                Use only for trusted local deployments.
   --data-dir <path>             Runtime data/log directory
   --upload-dir <path>           Upload directory
   --build                       Run next build before starting
@@ -932,6 +931,10 @@ If no password is configured and the host is loopback, start prints a temporary
 local password. Non-loopback hosts require a configured password.
 
 Precedence: CLI options > environment variables > config file > defaults.
+Permission knobs:
+  --permissions is the user-facing preset.
+  --approval-policy is a low-level default and becomes non-overridable when set.
+  --unsafe-permissions is required before unsafe low-level defaults are allowed.
 Full-control unlocks per-thread escalation but keeps restricted defaults.
 If approval-policy or sandbox is specified by CLI/env/config, the server locks
 that policy and browser requests cannot override it.
@@ -955,7 +958,8 @@ Options:
                                 current working directory
   --model <model>               Default Codex model. Default: gpt-5.5
   --effort <effort>             Default reasoning effort. Default: high
-  --permissions <mode>          restricted or full-control
+  --permissions <mode>          restricted or full-control. full-control only
+                                unlocks the per-thread nuclear option.
   --full-control                Store full-control permission preset
   --data-dir <path>             Runtime data/log directory
   --upload-dir <path>           Upload directory

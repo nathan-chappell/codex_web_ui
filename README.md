@@ -154,8 +154,6 @@ codex-web-ui \
   --cwd /path/to/project \
   --model gpt-5.5 \
   --effort high \
-  --approval-policy on-request \
-  --sandbox workspace-write \
   --data-dir "$PWD/data"
 ```
 
@@ -166,14 +164,19 @@ socket is not websocket-ready.
 
 Default permissions are intentionally restricted: new turns start with
 `on-request` approval and the `workspace-write` sandbox. Security is primarily
-chosen per thread in the UI. The global `--full-control` / `permissions:
-"full-control"` switch only unlocks the nuclear per-thread option; it does not
-make every new thread start with `approvalPolicy=never` or
-`danger-full-access`. The UI can then upgrade a single thread from an approval
-request or from the thread settings.
+chosen per thread in the UI.
 
-Legacy `approvalPolicy` and `sandbox` config keys still work. If either is set
-globally, the backend locks that policy and browser requests cannot override it.
+Permission options are split by intent:
+
+- `--permissions restricted|full-control` is the user-facing preset.
+  `full-control` unlocks the nuclear per-thread option; it does not make every
+  new thread start with `approvalPolicy=never` or `danger-full-access`.
+- `--approval-policy <policy>` is a low-level default. If it is set by
+  CLI/env/config, the backend locks that policy and browser requests cannot
+  override it.
+- `--unsafe-permissions` is required before unsafe low-level defaults such as
+  `--approval-policy never` or `--sandbox danger-full-access` are accepted.
+
 Codex approval requests are surfaced in the UI approval tray and answered
 through the authenticated `/api/client-requests/respond` endpoint.
 
@@ -395,7 +398,6 @@ CODEX_MODEL=gpt-5.5 CODEX_REASONING_EFFORT=high npm start
 CODEX_WEB_UI_APPROVAL_POLICY=on-request CODEX_WEB_UI_SANDBOX=workspace-write npm start
 CODEX_WEB_UI_UNSAFE_PERMISSIONS=1 CODEX_WEB_UI_SANDBOX=danger-full-access npm start
 CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
-CODEX_WEB_UI_EXTERNAL_APP_SERVER=1 CODEX_APP_SERVER_SOCKET=/path/to/codex-app-server.sock npm start
 CODEX_WEB_UI_DATA_DIR=/path/to/logs npm start
 ```
 
@@ -411,5 +413,7 @@ Next loads `.env` from the project root before reading these variables. Shell en
 - Shows file-backed session history in the frontend.
 - Renders turns, reasoning, user/agent markdown, commands, command output, file changes, diffs, file references, and tool calls, with AI Elements primitives for the composer, confirmations, terminal output, code blocks, and file tree.
 - Uploads file attachments and inserts uploaded paths into the composer.
+- Supports `/goal <objective>`, `/goal status`, `/goal pause`,
+  `/goal resume`, and `/goal clear` through the official app-server goal RPCs.
 - Previews referenced text, code, Markdown, JSON, images, PDFs, and browser-playable video files.
 - Shows app-server status and account rate-limit usage.

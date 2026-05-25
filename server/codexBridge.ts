@@ -1,7 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import crypto from "node:crypto";
 import net from "node:net";
-import readline from "node:readline";
 import type { EventHub } from "./eventHub";
 import type { SessionLogStore } from "./logStore";
 import type { JsonRpcNotification, JsonRpcResponse, JsonValue, ServerStatus } from "./types";
@@ -42,7 +40,6 @@ export class CodexBridge {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly clientRequests = new Map<string, ClientRequest>();
   private startPromise: Promise<void> | null = null;
-  private readonly stderrLines: { at: number; line: string }[] = [];
   private status: ServerStatus;
 
   constructor(
@@ -66,7 +63,6 @@ export class CodexBridge {
   summary(): Record<string, unknown> {
     return {
       ...this.status,
-      stderr: [...this.stderrLines],
       config: this.config
     };
   }
@@ -175,9 +171,10 @@ export class CodexBridge {
     });
 
     try {
-      const connection = this.config.appServerSocketPath
-        ? await this.connectUnixSocketAppServer()
-        : this.spawnOwnedAppServer();
+      if (!this.config.appServerSocketPath) {
+        throw new Error("CODEX_APP_SERVER_SOCKET is required; start the Codex app-server sidecar first.");
+      }
+      const connection = await this.connectUnixSocketAppServer();
       this.connection = connection;
       this.setStatus({ state: "starting", pid: connection.pid });
 
@@ -199,49 +196,6 @@ export class CodexBridge {
     }
   }
 
-  private spawnOwnedAppServer(): AppServerConnection {
-    const proc = spawn(this.config.command, ["app-server", ...this.configArgs(), "--listen", "stdio://"], {
-      cwd: this.config.cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-
-    proc.once("error", (error) => this.handleConnectionError(error));
-    proc.once("exit", (code, signal) => this.handleConnectionExit(
-      code === 0 ? null : `codex app-server exited with code ${code ?? "unknown"}`,
-      code,
-      signal as NodeJS.Signals | null
-    ));
-    readline.createInterface({ input: proc.stdout }).on("line", (line) => this.handleMessageText(line));
-    readline.createInterface({ input: proc.stderr }).on("line", (line) => this.handleStderr(line));
-
-    return {
-      pid: proc.pid ?? null,
-      close: async () => {
-        if (proc.exitCode !== null || proc.killed) {
-          return;
-        }
-        proc.kill("SIGTERM");
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            if (proc.exitCode === null && !proc.killed) {
-              proc.kill("SIGKILL");
-            }
-            resolve();
-          }, 5_000);
-          proc.once("exit", () => {
-            clearTimeout(timer);
-            resolve();
-          });
-        });
-      },
-      isWritable: () => proc.stdin.writable,
-      write: (message: Record<string, unknown>) => {
-        proc.stdin.write(`${JSON.stringify(message)}\n`);
-      }
-    };
-  }
-
   private async connectUnixSocketAppServer(): Promise<AppServerConnection> {
     return UnixWebSocketConnection.connect({
       path: this.config.appServerSocketPath,
@@ -249,20 +203,6 @@ export class CodexBridge {
       onError: (error) => this.handleConnectionError(error),
       onMessage: (text) => this.handleMessageText(text)
     });
-  }
-
-  private configArgs(): string[] {
-    const args: string[] = [];
-    if (this.config.model) {
-      args.push("-c", `model="${this.config.model}"`);
-    }
-    if (this.config.reasoningEffort) {
-      args.push("-c", `model_reasoning_effort="${this.config.reasoningEffort}"`);
-    }
-    if (!this.config.fastMode) {
-      args.push("--disable", "fast_mode");
-    }
-    return args;
   }
 
   private write(message: Record<string, unknown>): void {
@@ -327,16 +267,6 @@ export class CodexBridge {
     }
 
     this.hub.broadcast("json", message);
-  }
-
-  private handleStderr(line: string): void {
-    const item = { at: Date.now(), line };
-    this.stderrLines.push(item);
-    if (this.stderrLines.length > 150) {
-      this.stderrLines.splice(0, this.stderrLines.length - 150);
-    }
-    void this.logs.append({ type: "stderr", payload: line });
-    this.hub.broadcast("stderr", item);
   }
 
   private rejectPending(error: Error): void {

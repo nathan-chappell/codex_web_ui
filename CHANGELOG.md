@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.12
+
+- Removed the deprecated `--external-app-server` no-op and the old stdio-owned app-server fallback from the web bridge.
+- Clarified `--permissions`, `--approval-policy`, and `--unsafe-permissions` in CLI help and README security docs.
+- Added `/goal` composer commands backed by the official `thread/goal/*` app-server RPCs.
+
 ## 1.0.11
 
 - Simplified global permission config so full-control unlocks per-thread escalation while restricted defaults remain `on-request` plus `workspace-write`.
