@@ -755,27 +755,6 @@ textarea {
   font-weight: 650;
 }
 
-.thread-tail-toggle {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  border: 1px solid #e2e6e8;
-  border-radius: 999px;
-  padding: 5px 10px;
-  background: #fff;
-  color: #5f686d;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.thread-tail-toggle.active {
-  border-color: #050505;
-  background: #050505;
-  color: #fff;
-}
-
 .usage-metric {
   display: inline-flex;
   align-items: center;
@@ -1979,6 +1958,11 @@ textarea {
   color: var(--text);
 }
 
+.icon-button.tail-toggle.active {
+  background: #050505;
+  color: #fff;
+}
+
 .icon-button.danger-icon-button {
   background: #f8e6e6;
   color: var(--red);
@@ -3058,18 +3042,6 @@ textarea {
   }
 
   .thread-title-block p {
-    display: none;
-  }
-
-  .thread-tail-toggle {
-    min-width: 34px;
-    width: 34px;
-    height: 34px;
-    justify-content: center;
-    padding: 0;
-  }
-
-  .thread-tail-toggle span {
     display: none;
   }
 

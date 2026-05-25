@@ -2492,18 +2492,6 @@ const ThreadPane = memo(function ThreadPane({
             <p>Choose a thread from the list or selector.</p>
           </div>
         )}
-        {thread && (
-          <button
-            className={`thread-tail-toggle ${tailEnabled ? "active" : ""}`}
-            type="button"
-            aria-pressed={tailEnabled}
-            onClick={() => setTailMode(!tailEnabled)}
-            title={tailEnabled ? "Stop tailing new items" : "Tail new items"}
-          >
-            <ListEnd size={15} />
-            <span>Tail</span>
-          </button>
-        )}
       </header>
       {thread ? (
         <>
@@ -2529,8 +2517,10 @@ const ThreadPane = memo(function ThreadPane({
             archiveLabel={archiveLabel}
             collapsed={composerCollapsed}
             contextUsage={contextUsage}
+            tailEnabled={tailEnabled}
             onError={onError}
             onCollapsedChange={onComposerCollapsedChange}
+            onTailEnabledChange={setTailMode}
             onOpenSettings={onOpenSettings}
             onReferenceFile={onReferenceFile}
             onReferenceSkill={onReferenceSkill}
@@ -3910,6 +3900,7 @@ const Composer = memo(function Composer({
   contextUsage,
   deliveryKey,
   deliveryVersion,
+  tailEnabled,
   onArchive,
   onCollapsedChange,
   onError,
@@ -3918,6 +3909,7 @@ const Composer = memo(function Composer({
   onOpenSettings,
   onReferenceFile,
   onReferenceSkill,
+  onTailEnabledChange,
   onSend
 }: {
   activeTurnId: string | null;
@@ -3926,6 +3918,7 @@ const Composer = memo(function Composer({
   contextUsage: ThreadTokenUsage | null;
   deliveryKey: string;
   deliveryVersion: number;
+  tailEnabled: boolean;
   onArchive: () => void;
   onCollapsedChange: (collapsed: boolean) => void;
   onError: (error: unknown) => void;
@@ -3934,6 +3927,7 @@ const Composer = memo(function Composer({
   onOpenSettings: () => void;
   onReferenceFile: (onSelect: (entry: FileExplorerEntry, explorer: FileExplorer) => void) => void;
   onReferenceSkill: (onSelect: (skill: SkillReference) => void) => void;
+  onTailEnabledChange: (enabled: boolean) => void;
   onSend: (text: string, action?: ComposerAction) => Promise<boolean>;
 }) {
   const [uploading, setUploading] = useState(false);
@@ -4334,6 +4328,16 @@ const Composer = memo(function Composer({
             aria-label={collapsed ? "Expand composer" : "Collapse composer"}
           >
             {collapsed ? <ChevronsUp size={17} /> : <ChevronsDown size={17} />}
+          </PromptInputButton>
+          <PromptInputButton
+            className={`icon-button tail-toggle ${tailEnabled ? "active" : ""}`}
+            type="button"
+            aria-pressed={tailEnabled}
+            onClick={() => onTailEnabledChange(!tailEnabled)}
+            tooltip={tailEnabled ? "Stop tailing new items" : "Tail new items"}
+            aria-label={tailEnabled ? "Stop tailing new items" : "Tail new items"}
+          >
+            <ListEnd size={17} />
           </PromptInputButton>
         </div>
         <div className="composer-top-meta">
