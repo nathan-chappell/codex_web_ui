@@ -2356,7 +2356,7 @@ const ThreadPane = memo(function ThreadPane({
       lastThreadViewRef.current = "";
       lastItemCountRef.current = 0;
       lastFinalAnswerCountRef.current = 0;
-      setTailMode(true);
+      setTailEnabledState(true);
       setTopHiddenState(false);
       return;
     }
@@ -2364,7 +2364,7 @@ const ThreadPane = memo(function ThreadPane({
       lastThreadViewRef.current = thread.id;
       lastItemCountRef.current = itemCount;
       lastFinalAnswerCountRef.current = countFinalAnswerItems(thread.turns ?? []);
-      setTailMode(true);
+      setTailEnabledState(true);
       setTopHiddenState(isMobileViewport());
       scrollToEnd("instant");
       return;
@@ -2389,9 +2389,6 @@ const ThreadPane = memo(function ThreadPane({
     const awayFromBottom = bottomDistance > 120;
 
     conversationScrollTopRef.current = nextTop;
-    if (!nearBottom && scrollingTowardHistory && awayFromBottom) {
-      setTailMode(false);
-    }
 
     if (isMobileViewport()) {
       if (scrollingTowardHistory && awayFromBottom) {
@@ -2439,11 +2436,15 @@ const ThreadPane = memo(function ThreadPane({
   }
 
   function setTailMode(value: boolean) {
-    tailEnabledRef.current = value;
-    setTailEnabled(value);
+    setTailEnabledState(value);
     if (value) {
       scrollToEnd("smooth", 2);
     }
+  }
+
+  function setTailEnabledState(value: boolean) {
+    tailEnabledRef.current = value;
+    setTailEnabled(value);
   }
 
   function scheduleChromeState(nextState: { topHidden?: boolean }) {
