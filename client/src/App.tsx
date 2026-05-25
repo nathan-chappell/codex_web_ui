@@ -4810,13 +4810,29 @@ function statusClass(status: string): string {
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
-    inProgress: "in progress",
-    waitingOnApproval: "waiting approval",
-    waitingOnUserInput: "waiting input",
-    notLoaded: "not loaded",
-    systemError: "system error"
+    inProgress: "In Progress",
+    notLoaded: "Not Loaded",
+    stderr: "Stderr",
+    stdout: "Stdout",
+    systemError: "System Error",
+    "turn started": "Turn Started",
+    waitingOnApproval: "Waiting Approval",
+    waitingOnUserInput: "Waiting Input"
   };
-  return labels[status] || status;
+  return labels[status] || humanizeIdentifier(status);
+}
+
+function humanizeIdentifier(value: string): string {
+  const words = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) {
+    return value;
+  }
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
 }
 
 function parseClientRequest(value: unknown): ClientRequest | null {
