@@ -30,7 +30,6 @@ import {
   Search,
   Send,
   Settings,
-  Target,
   Trash2,
   X
 } from "lucide-react";
@@ -4399,9 +4398,6 @@ const Composer = memo(function Composer({
                     </button>
                     <button type="button" role="menuitem" onClick={() => insertComposerMenuText("/compact")}>
                       <Minimize2 size={16} /> Compact
-                    </button>
-                    <button type="button" role="menuitem" onClick={() => insertComposerMenuText("/goal ")}>
-                      <Target size={16} /> Goal
                     </button>
                     <button type="button" role="menuitem" onClick={() => runComposerMenuAction(onArchive)}>
                       <Archive size={16} /> {archiveLabel}
