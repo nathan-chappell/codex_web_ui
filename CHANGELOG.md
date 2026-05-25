@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.13
+
+- Kept the Tail toggle visible in the composer and made tailing entirely controlled by that toggle.
+- Removed the Goal shortcut from the composer dots menu while preserving typed `/goal` command support.
+- Humanized status badge labels such as `inProgress` to `In Progress`.
+
 ## 1.0.12
 
 - Removed the deprecated `--external-app-server` no-op and the old stdio-owned app-server fallback from the web bridge.
